@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 // motion still used for tab underline + copilot slide
-import { Bot, Clock, Database, FileSearch, MessageSquareText, UploadCloud } from "lucide-react";
+import { Bot, Clock, Database, FileSearch, MessageSquareText, UploadCloud, Wand2, X } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
 import { FilterBar } from "@/components/FilterBar";
 import { CopilotPanel } from "@/components/CopilotPanel";
@@ -15,6 +15,9 @@ export function WorkspacePage() {
   const analysis = useAppStore((s) => s.viewAnalysis);
   const persona = useAppStore((s) => s.persona);
   const setPersona = useAppStore((s) => s.setPersona);
+  const activeDatasetId = useAppStore((s) => s.activeDatasetId);
+  const customWidgets = useAppStore((s) => s.customWidgets);
+  const resetDashboardLayout = useAppStore((s) => s.resetDashboardLayout);
   const [copilotOpen, setCopilotOpen] = useState(true);
 
   const dashboards = analysis?.dashboards ?? [];
@@ -22,6 +25,10 @@ export function WorkspacePage() {
     () => dashboards.find((d) => d.persona === persona) ?? dashboards[0],
     [dashboards, persona]
   );
+
+  // chat-customized layout takes precedence over the generated one
+  const override = customWidgets[`${activeDatasetId}:${active?.persona ?? persona}`];
+  const widgets = override ?? active?.widgets ?? [];
 
   // keep persona valid when switching between telecom/generic datasets
   useEffect(() => {
@@ -128,6 +135,18 @@ export function WorkspacePage() {
                 )}
               </button>
             ))}
+            {override && (
+              <span className="ml-2 flex shrink-0 items-center gap-1.5 rounded-full border border-accent-500/40 bg-accent-500/10 px-2 py-0.5 text-[10px] font-bold text-accent-400">
+                <Wand2 size={10} /> Customized by chat
+                <button
+                  onClick={resetDashboardLayout}
+                  title="Reset to the AI-generated layout"
+                  className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-accent-500 hover:text-white"
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            )}
           </nav>
         </header>
 
@@ -143,7 +162,7 @@ export function WorkspacePage() {
             key={`${analysis.datasetId}-${active?.persona}-${analysis.generatedAt}`}
             className="grid grid-cols-1 gap-4 pb-8 md:grid-cols-2 xl:grid-cols-4"
           >
-            {active?.widgets.map((spec, i) => (
+            {widgets.map((spec, i) => (
               <WidgetRenderer key={spec.id} spec={spec} analysis={analysis} index={i} />
             ))}
           </div>

@@ -59,12 +59,14 @@ export function EntityTable({
   measureLabel = "Util",
   isPct = true,
   higherIsBad = true,
+  maxRows,
 }: {
   entities: EntityStat[];
   mode: "risk" | "saturation" | "congestion";
   measureLabel?: string;
   isPct?: boolean;
   higherIsBad?: boolean;
+  maxRows?: number;
 }) {
   const [sortKey, setSortKey] = useState<EntitySortKey>(mode === "congestion" ? "congestedHours" : "riskScore");
   const [desc, setDesc] = useState(true);
@@ -80,8 +82,8 @@ export function EntityTable({
     } else {
       base.sort((a, b) => ((b[sortKey] as number) - (a[sortKey] as number)) * (desc ? 1 : -1));
     }
-    return base.slice(0, 12);
-  }, [entities, sortKey, desc, mode]);
+    return base.slice(0, maxRows ?? 12);
+  }, [entities, sortKey, desc, mode, maxRows]);
 
   const maxMeasure = useMemo(() => Math.max(...entities.map((e) => (isPct ? e.p95Util : e.avgUtil)), 1e-9), [entities, isPct]);
 

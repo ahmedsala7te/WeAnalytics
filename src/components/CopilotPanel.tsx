@@ -1,6 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bot, Cpu, Download, FileSpreadsheet, FileText, Loader2, Presentation, Send, Sparkles, Square, Trash2, User, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  Cpu,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  LayoutDashboard,
+  Loader2,
+  MessageSquareText,
+  Presentation,
+  Send,
+  Sparkles,
+  Square,
+  Trash2,
+  User,
+  Wand2,
+  X,
+} from "lucide-react";
 import { SUGGESTED_QUESTIONS } from "@/lib/constants";
 import { useAppStore } from "@/store/useAppStore";
 import { EChart } from "@/components/EChart";
@@ -39,6 +58,7 @@ function Rich({ text }: { text: string }) {
 
 function Message({ msg }: { msg: ChatMessage }) {
   const dark = useAppStore((s) => s.theme) === "dark";
+  const applySuggested = useAppStore((s) => s.applySuggestedActions);
   const isUser = msg.role === "user";
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2.5 ${isUser ? "flex-row-reverse" : ""}`}>
@@ -63,6 +83,30 @@ function Message({ msg }: { msg: ChatMessage }) {
             <EChart option={chatChartOption(dark, msg.chart)} height={Math.max(150, Math.min(230, msg.chart.labels.length * 22))} />
           </div>
         )}
+        {!isUser && (msg.applied?.length || msg.failed?.length) ? (
+          <div className="mt-2 space-y-1 rounded-lg border border-subtle bg-surface p-2.5">
+            {msg.applied?.map((t, i) => (
+              <div key={`a${i}`} className="flex items-start gap-1.5 text-[11.5px] text-secondary">
+                <Check size={12} className="mt-0.5 shrink-0 text-success-500" strokeWidth={3} />
+                {t}
+              </div>
+            ))}
+            {msg.failed?.map((t, i) => (
+              <div key={`f${i}`} className="flex items-start gap-1.5 text-[11.5px] text-warning-500">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                {t}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {!isUser && !msg.streaming && msg.suggestedActions?.length ? (
+          <button
+            onClick={() => applySuggested(msg.id)}
+            className="mt-2 flex items-center gap-1.5 rounded-lg border border-accent-500/50 bg-accent-500/10 px-2.5 py-1.5 text-[11.5px] font-bold text-accent-400 transition-all hover:bg-accent-500 hover:text-white"
+          >
+            <Wand2 size={12} /> Apply to dashboard ({msg.suggestedActions.length} change{msg.suggestedActions.length === 1 ? "" : "s"})
+          </button>
+        ) : null}
         {!isUser && msg.engine && !msg.streaming && (
           <div className="mt-1.5 flex items-center gap-1 text-[9.5px] font-semibold uppercase tracking-wide text-muted">
             <Cpu size={9} />
@@ -78,6 +122,9 @@ export function CopilotPanel({ onClose }: { onClose?: () => void }) {
   const chat = useAppStore((s) => s.chat);
   const busy = useAppStore((s) => s.chatBusy);
   const ask = useAppStore((s) => s.ask);
+  const askDashboard = useAppStore((s) => s.askDashboard);
+  const chatMode = useAppStore((s) => s.chatMode);
+  const setChatMode = useAppStore((s) => s.setChatMode);
   const clearChat = useAppStore((s) => s.clearChat);
   const stopGeneration = useAppStore((s) => s.stopGeneration);
   const analysis = useAppStore((s) => s.viewAnalysis);
@@ -87,6 +134,7 @@ export function CopilotPanel({ onClose }: { onClose?: () => void }) {
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const streaming = chat.some((m) => m.streaming);
+  const dashboardMode = chatMode === "dashboard";
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -95,6 +143,10 @@ export function CopilotPanel({ onClose }: { onClose?: () => void }) {
   const submit = async (q: string) => {
     if (!q.trim() || busy) return;
     setDraft("");
+    if (dashboardMode) {
+      await askDashboard(q.trim());
+      return;
+    }
     const reply = await ask(q.trim());
     if (reply?.action && analysis) {
       // chat-triggered export
@@ -154,14 +206,26 @@ export function CopilotPanel({ onClose }: { onClose?: () => void }) {
           <div className="space-y-3">
             <div className="rounded-2xl rounded-tl-sm border border-subtle bg-surface-2 px-3 py-2.5">
               <p className="text-[12px] leading-relaxed text-secondary">
-                Hi — I'm your network analytics copilot. I've indexed{" "}
-                <strong className="text-primary">{analysis ? analysis.datasetName : "no dataset yet"}</strong>
-                {analysis ? ` (${analysis.rowsAnalyzed.toLocaleString()} rows). Ask me anything about congestion, capacity, forecasts or alarms.` : ". Upload data to begin."}
+                {dashboardMode ? (
+                  <>
+                    Dashboard mode — tell me how to change the workspace and I'll apply it:{" "}
+                    <strong className="text-primary">filter regions or dates, add/remove charts, switch views</strong>. Switch back to
+                    Answer mode for Q&A.
+                  </>
+                ) : (
+                  <>
+                    Hi — I'm your network analytics copilot. I've indexed{" "}
+                    <strong className="text-primary">{analysis ? analysis.datasetName : "no dataset yet"}</strong>
+                    {analysis
+                      ? ` (${analysis.rowsAnalyzed.toLocaleString()} rows). Ask me anything about congestion, capacity, forecasts or alarms.`
+                      : ". Upload data to begin."}
+                  </>
+                )}
               </p>
             </div>
             {analysis && (
               <div className="flex flex-wrap gap-1.5">
-                {SUGGESTED_QUESTIONS.map((q) => (
+                {(dashboardMode ? dashboardSuggestions(analysis) : SUGGESTED_QUESTIONS).map((q) => (
                   <button
                     key={q}
                     onClick={() => void submit(q)}
@@ -218,6 +282,29 @@ export function CopilotPanel({ onClose }: { onClose?: () => void }) {
         }}
         className="border-t border-subtle p-3"
       >
+        {/* answer ↔ dashboard mode toggle */}
+        <div className="mb-2 grid grid-cols-2 gap-1 rounded-xl border border-subtle bg-surface-2 p-1">
+          <button
+            type="button"
+            onClick={() => setChatMode("chat")}
+            className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-bold transition-all ${
+              !dashboardMode ? "bg-accent-500 text-white shadow-glow" : "text-muted hover:text-primary"
+            }`}
+            title="Replies answer in chat"
+          >
+            <MessageSquareText size={12} /> Answer
+          </button>
+          <button
+            type="button"
+            onClick={() => setChatMode("dashboard")}
+            className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-bold transition-all ${
+              dashboardMode ? "bg-accent-500 text-white shadow-glow" : "text-muted hover:text-primary"
+            }`}
+            title="Requests are applied to the dashboard"
+          >
+            <LayoutDashboard size={12} /> Apply to dashboard
+          </button>
+        </div>
         <div className="flex items-end gap-2 rounded-xl border border-subtle bg-surface-2 p-1.5 focus-within:border-accent-500/60">
           <textarea
             value={draft}
@@ -229,21 +316,45 @@ export function CopilotPanel({ onClose }: { onClose?: () => void }) {
               }
             }}
             rows={1}
-            placeholder={analysis ? "Ask about your network…" : "Upload data first…"}
+            placeholder={!analysis ? "Upload data first…" : dashboardMode ? "Tell me how to change the dashboard…" : "Ask about your network…"}
             disabled={!analysis}
             className="max-h-28 flex-1 resize-none bg-transparent px-2 py-1.5 text-[12.5px] text-primary placeholder:text-muted focus:outline-none disabled:opacity-50"
           />
           <button
             type="submit"
             disabled={!draft.trim() || busy || !analysis}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-500 text-white transition-all hover:bg-accent-400 disabled:opacity-30"
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white transition-all disabled:opacity-30 ${
+              dashboardMode ? "bg-gradient-to-br from-accent-500 to-info-500 hover:opacity-90" : "bg-accent-500 hover:bg-accent-400"
+            }`}
+            title={dashboardMode ? "Apply to dashboard" : "Send"}
           >
-            <Send size={14} />
+            {dashboardMode ? <Wand2 size={14} /> : <Send size={14} />}
           </button>
         </div>
       </form>
     </aside>
   );
+}
+
+function dashboardSuggestions(a: {
+  regionStats: { region: string; riskScore: number }[];
+  timeRange: unknown;
+  measureIsPct: boolean;
+  dashboards: { persona: string }[];
+  topEntityDaily: unknown[];
+  kpis: { name: string }[];
+}): string[] {
+  const worst = [...a.regionStats].sort((x, y) => y.riskScore - x.riskScore)[0]?.region;
+  return [
+    ...(worst ? [`Focus on ${worst}`] : []),
+    a.measureIsPct ? "Add a top 20 congested table" : "Add a top 10 worst elements table",
+    ...(a.topEntityDaily.length > 1 ? ["Add bars per element for each day"] : []),
+    ...(a.kpis.length > 4 ? [`Remove the ${a.kpis[a.kpis.length - 1].name} KPI card`] : []),
+    ...(a.timeRange ? ["Last 7 days"] : []),
+    "Make the trend full width",
+    ...(a.dashboards.some((d) => d.persona === "capacity") ? ["Switch to capacity view"] : []),
+    "Reset dashboard",
+  ];
 }
 
 function ExportBtn({ icon: Icon, label, onClick }: { icon: typeof FileText; label: string; onClick: () => void }) {

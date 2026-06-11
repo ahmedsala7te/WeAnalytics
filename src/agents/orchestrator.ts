@@ -187,6 +187,7 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     distribution: intel.distribution,
     correlations: stats.correlations,
     congestionEvents: intel.congestionEvents,
+    topEntityDaily: intel.topEntityDaily,
   });
   emit("design", "done", `${dashboards.length} dashboards · ${dashboards.reduce((s, d) => s + d.widgets.length, 0)} widgets`);
   await pace(440);
@@ -235,5 +236,6 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     measureIsPct,
     measureHigherIsBad: !!mapping.measureHigherIsBad && !measureIsPct,
     transformNote,
+    topEntityDaily: intel.topEntityDaily,
   };
 }

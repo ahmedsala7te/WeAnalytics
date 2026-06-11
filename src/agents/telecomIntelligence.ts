@@ -28,6 +28,7 @@ export interface IntelligenceOutput {
   healthScore: number;
   sankey: SankeyData | null;
   distribution: { bins: string[]; counts: number[]; metric: string } | null;
+  topEntityDaily: NamedSeries[];
 }
 
 interface EntityAccumulator {
@@ -464,6 +465,20 @@ export function computeIntelligence(frame: Frame, mapping: SemanticMapping, isTe
     healthScore = mean(regionStats.map((r) => r.healthScore));
   }
 
+  /* ------------------- per-element daily series (top risk) ------------------ */
+  const topEntityDaily: NamedSeries[] = [];
+  if (frame.hasTime) {
+    for (const e of entityStats.slice(0, 12)) {
+      const a = acc.get(e.entity);
+      if (!a || a.dailyPeak.size < 2) continue;
+      const days = [...a.dailyPeak.keys()].sort((x, y) => x - y);
+      topEntityDaily.push({
+        name: e.entity,
+        points: days.map((d) => ({ t: start + d * DAY_MS, v: a.dailyPeak.get(d)! })),
+      });
+    }
+  }
+
   return {
     entityStats,
     regionStats,
@@ -474,5 +489,6 @@ export function computeIntelligence(frame: Frame, mapping: SemanticMapping, isTe
     healthScore,
     sankey,
     distribution,
+    topEntityDaily,
   };
 }

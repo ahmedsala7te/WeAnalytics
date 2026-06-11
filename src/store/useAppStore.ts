@@ -4,6 +4,8 @@ import { uid } from "@/lib/format";
 import { ROLES } from "@/lib/constants";
 import { applyFilters, runPipeline } from "@/agents/orchestrator";
 import { answerQuery } from "@/agents/chatAssistant";
+import { applyWidgetActions, describeAction, parseActions } from "@/agents/dashboardActions";
+import { planActions } from "@/llm/actionAssist";
 import { DEFAULT_OLLAMA_URL, chatOnce, pickDefaultModel, pingOllama, streamChat, type LlmChatMessage } from "@/llm/ollamaClient";
 import { buildChatSystemPrompt, buildNarrativePrompt, parseNarrativeJson } from "@/llm/contextBuilder";
 import { runMappingAssist } from "@/llm/mappingAssist";
@@ -13,12 +15,14 @@ import type {
   AnalysisResult,
   AuditEntry,
   ChatMessage,
+  DashboardAction,
   Dataset,
   FilterState,
   LlmState,
   PersonaId,
   RoleId,
   UserProfile,
+  WidgetSpec,
 } from "@/lib/types";
 import { EMPTY_FILTERS } from "@/lib/types";
 
@@ -58,9 +62,18 @@ interface AppState {
   /* chat */
   chat: ChatMessage[];
   chatBusy: boolean;
+  chatMode: "chat" | "dashboard";
+  setChatMode: (m: "chat" | "dashboard") => void;
   ask: (q: string) => Promise<ChatMessage | null>;
+  askDashboard: (q: string) => Promise<ChatMessage | null>;
   clearChat: () => void;
   stopGeneration: () => void;
+
+  /* chat-driven dashboard customization */
+  customWidgets: Record<string, WidgetSpec[]>;
+  applyDashboardActions: (actions: DashboardAction[]) => { applied: string[]; failed: string[] };
+  applySuggestedActions: (messageId: string) => void;
+  resetDashboardLayout: () => void;
 
   /* local LLM (Ollama) */
   llm: LlmState;
@@ -152,6 +165,11 @@ export const useAppStore = create<AppState>()(
         const llm = get().llm;
         const useLlm = llm.status === "connected" && !!llm.model && !det.action;
 
+        // smart offer: if the question also reads as a dashboard command, let
+        // the user apply it from the reply
+        const suggested = parseActions(q, a, widgetsOf(get()), techValuesOf(get()));
+        const suggestedActions = suggested.length > 0 ? suggested : undefined;
+
         if (!useLlm) {
           await new Promise((r) => setTimeout(r, 420 + Math.random() * 400));
           const reply: ChatMessage = {
@@ -162,6 +180,7 @@ export const useAppStore = create<AppState>()(
             action: det.action,
             at: Date.now(),
             engine: "rules",
+            suggestedActions,
           };
           set({ chat: [...get().chat, reply], chatBusy: false });
           return reply;
@@ -177,6 +196,7 @@ export const useAppStore = create<AppState>()(
           at: Date.now(),
           streaming: true,
           engine: llm.model!,
+          suggestedActions,
         };
         set({ chat: [...get().chat, reply] });
 
@@ -225,8 +245,189 @@ export const useAppStore = create<AppState>()(
         return get().chat.find((m) => m.id === replyId) ?? null;
       },
       clearChat: () => set({ chat: [] }),
+      chatMode: "chat",
+      setChatMode: (m) => set({ chatMode: m }),
       stopGeneration: () => {
         chatAbort?.abort();
+      },
+
+      /* ---------------- chat-driven dashboard actions ---------------- */
+      customWidgets: {},
+
+      askDashboard: async (q) => {
+        const a = get().viewAnalysis;
+        const userMsg: ChatMessage = { id: uid("msg"), role: "user", text: q, at: Date.now() };
+        set({ chat: [...get().chat, userMsg], chatBusy: true });
+        get().logAudit("AI_DASHBOARD_REQUEST", q.slice(0, 120));
+
+        const finish = (reply: Omit<ChatMessage, "id" | "role" | "at">): ChatMessage => {
+          const msg: ChatMessage = { id: uid("msg"), role: "assistant", at: Date.now(), ...reply };
+          set({ chat: [...get().chat, msg], chatBusy: false });
+          return msg;
+        };
+
+        if (!a) {
+          return finish({ text: "Upload a dataset first — once dashboards exist I can modify them from chat." });
+        }
+
+        await new Promise((r) => setTimeout(r, 350));
+        let actions = parseActions(q, a, widgetsOf(get()), techValuesOf(get()));
+        let engine = "rules";
+        const llm = get().llm;
+        if (actions.length === 0 && llm.status === "connected" && llm.model) {
+          // short conversation context so follow-ups ("for msan please") resolve
+          const tail = get()
+            .chat.slice(-5, -1)
+            .map((m) => (m.role === "user" ? `User asked: ${m.text.slice(0, 140)}` : m.applied?.length ? `Applied: ${m.applied.join("; ").slice(0, 140)}` : null))
+            .filter(Boolean)
+            .join("\n");
+          actions = await planActions(q, a, widgetsOf(get()), { baseUrl: llm.baseUrl, model: llm.model }, tail || undefined);
+          engine = llm.model;
+        }
+        if (actions.length === 0) {
+          const det = answerQuery(q, a);
+          return finish({
+            text: `I couldn't map that to a dashboard change — try things like "focus on ${a.regionStats[0]?.region ?? "a region"}", "add a top 20 table", "remove the heatmap", or "reset dashboard". Here's the answer instead:\n\n${det.text}`,
+            chart: det.chart,
+            engine: "rules",
+          });
+        }
+        const res = get().applyDashboardActions(actions);
+        const ok = res.applied.length > 0;
+        return finish({
+          text: ok ? "Done — the dashboard has been updated." : "I understood the request but couldn't apply it.",
+          applied: res.applied,
+          failed: res.failed,
+          engine,
+        });
+      },
+
+      applyDashboardActions: (actions) => {
+        const applied: string[] = [];
+        const failed: string[] = [];
+        const { viewAnalysis, activeDatasetId, analyses } = get();
+        if (!viewAnalysis || !activeDatasetId) return { applied, failed };
+
+        /* 1 — persona switches first so widget ops hit the right tab */
+        for (const a of actions) {
+          if (a.kind === "switch-persona") {
+            if (viewAnalysis.dashboards.some((d) => d.persona === a.persona)) {
+              get().setPersona(a.persona);
+              applied.push(describeAction(a));
+            } else failed.push(`No "${a.persona}" dashboard for this dataset`);
+          }
+        }
+
+        /* 2 — reset layout */
+        if (actions.some((a) => a.kind === "reset-dashboard")) {
+          const key = widgetKey(get());
+          const cw = { ...get().customWidgets };
+          if (cw[key]) {
+            delete cw[key];
+            set({ customWidgets: cw });
+            applied.push("Reset the dashboard to the AI-generated layout");
+          } else {
+            applied.push("Dashboard is already the AI-generated layout");
+          }
+        }
+
+        /* 3 — widget + KPI-card mutations on the active persona */
+        const widgetActions = actions.filter(
+          (a) =>
+            a.kind === "add-widget" ||
+            a.kind === "remove-widget" ||
+            a.kind === "resize-widget" ||
+            a.kind === "set-limit" ||
+            a.kind === "remove-kpi" ||
+            a.kind === "add-kpi"
+        );
+        if (widgetActions.length > 0) {
+          const key = widgetKey(get());
+          const res = applyWidgetActions(widgetsOf(get()), widgetActions, viewAnalysis.kpis);
+          if (res.changed) set({ customWidgets: { ...get().customWidgets, [key]: res.widgets } });
+          applied.push(...res.applied);
+          failed.push(...res.failed);
+        }
+
+        /* 4 — filters merged into a single re-analysis */
+        const patch: Partial<FilterState> = {};
+        let touched = false;
+        const full = analyses[activeDatasetId];
+        for (const a of actions) {
+          switch (a.kind) {
+            case "filter-regions":
+              patch.regions = a.regions;
+              touched = true;
+              applied.push(describeAction(a));
+              break;
+            case "filter-dates":
+              if (a.clear) {
+                patch.dateStart = null;
+                patch.dateEnd = null;
+                touched = true;
+                applied.push(describeAction(a));
+              } else if (full?.timeRange && a.lastDays) {
+                patch.dateEnd = full.timeRange.end;
+                patch.dateStart = full.timeRange.end - a.lastDays * 864e5;
+                touched = true;
+                applied.push(describeAction(a));
+              } else {
+                failed.push("This dataset has no time dimension to filter");
+              }
+              break;
+            case "filter-search":
+              patch.search = a.search;
+              touched = true;
+              applied.push(describeAction(a));
+              break;
+            case "filter-technology":
+              patch.technology = a.technology;
+              touched = true;
+              applied.push(describeAction(a));
+              break;
+            case "reset-filters":
+              Object.assign(patch, { ...EMPTY_FILTERS });
+              touched = true;
+              applied.push(describeAction(a));
+              break;
+            default:
+              break;
+          }
+        }
+        if (touched) get().setFilters(patch);
+
+        if (applied.length > 0) get().logAudit("DASHBOARD_ACTION", applied.join(" · ").slice(0, 200));
+        return { applied, failed };
+      },
+
+      applySuggestedActions: (messageId) => {
+        const msg = get().chat.find((m) => m.id === messageId);
+        if (!msg?.suggestedActions?.length) return;
+        const res = get().applyDashboardActions(msg.suggestedActions);
+        set({
+          chat: [
+            ...get().chat.map((m) => (m.id === messageId ? { ...m, suggestedActions: undefined } : m)),
+            {
+              id: uid("msg"),
+              role: "assistant" as const,
+              text: res.applied.length > 0 ? "Applied to the dashboard." : "Couldn't apply those changes.",
+              applied: res.applied,
+              failed: res.failed,
+              at: Date.now(),
+              engine: "rules",
+            },
+          ],
+        });
+      },
+
+      resetDashboardLayout: () => {
+        const key = widgetKey(get());
+        const cw = { ...get().customWidgets };
+        if (cw[key]) {
+          delete cw[key];
+          set({ customWidgets: cw });
+          get().logAudit("DASHBOARD_ACTION", "Layout reset to AI-generated");
+        }
       },
 
       /* ------------------------------ local LLM ------------------------------ */
@@ -389,13 +590,15 @@ export const useAppStore = create<AppState>()(
       },
 
       removeDataset: (id) => {
-        const { datasets, analyses, activeDatasetId } = get();
+        const { datasets, analyses, activeDatasetId, customWidgets } = get();
         const rest = datasets.filter((d) => d.id !== id);
         const a = { ...analyses };
         delete a[id];
+        const cw = Object.fromEntries(Object.entries(customWidgets).filter(([k]) => !k.startsWith(`${id}:`)));
         set({
           datasets: rest,
           analyses: a,
+          customWidgets: cw,
           ...(activeDatasetId === id
             ? { activeDatasetId: rest[0]?.id ?? null, viewAnalysis: rest[0] ? (a[rest[0].id] ?? null) : null }
             : {}),
@@ -423,6 +626,34 @@ export const useAppStore = create<AppState>()(
     }
   )
 );
+
+/** Key for per-dataset, per-persona widget overrides. */
+function widgetKey(s: Pick<AppState, "activeDatasetId" | "persona">): string {
+  return `${s.activeDatasetId}:${s.persona}`;
+}
+
+/** The widget list currently shown: custom override or the generated layout. */
+export function widgetsOf(s: Pick<AppState, "viewAnalysis" | "activeDatasetId" | "persona" | "customWidgets">): WidgetSpec[] {
+  const a = s.viewAnalysis;
+  if (!a) return [];
+  const override = s.customWidgets[widgetKey(s)];
+  if (override) return override;
+  return a.dashboards.find((d) => d.persona === s.persona)?.widgets ?? a.dashboards[0]?.widgets ?? [];
+}
+
+/** Distinct technology values for the active dataset (filter vocabulary). */
+function techValuesOf(s: Pick<AppState, "datasets" | "activeDatasetId" | "viewAnalysis">): string[] {
+  const ds = s.datasets.find((d) => d.id === s.activeDatasetId);
+  const col = s.viewAnalysis?.mapping.technology;
+  if (!ds || !col) return [];
+  const out = new Set<string>();
+  for (const r of ds.rows) {
+    const v = r[col];
+    if (v !== null && v !== undefined) out.add(String(v));
+    if (out.size > 12) break;
+  }
+  return [...out];
+}
 
 async function refreshView(
   set: (s: Partial<AppState>) => void,

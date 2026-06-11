@@ -12,6 +12,7 @@ import {
   areaTrendOption,
   busyHourOption,
   correlationOption,
+  entityBarsOption,
   forecastOption,
   gaugeOption,
   heatmapOption,
@@ -76,7 +77,18 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
   const body = useMemo(() => {
     switch (spec.type) {
       case "kpi-grid": {
-        const kpis = pickKpis(a.kpis, spec.dataKey);
+        let kpis = pickKpis(a.kpis, spec.dataKey);
+        // chat-driven edits: hide excluded cards, append extra ones
+        if (spec.excludeKpis?.length) {
+          const ex = spec.excludeKpis.map((x) => x.toLowerCase());
+          kpis = kpis.filter((k) => !ex.some((x) => k.name.toLowerCase().includes(x) || x.includes(k.name.toLowerCase())));
+        }
+        if (spec.extraKpis?.length) {
+          for (const name of spec.extraKpis) {
+            const hit = a.kpis.find((k) => k.name.toLowerCase() === name.toLowerCase());
+            if (hit && !kpis.some((k) => k.id === hit.id)) kpis = [...kpis, hit];
+          }
+        }
         return (
           <div className={`grid grid-cols-2 gap-2.5 p-1 ${spec.span === 4 ? "lg:grid-cols-3 xl:grid-cols-6" : "lg:grid-cols-3"}`}>
             {kpis.map((k, i) => (
@@ -84,6 +96,11 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
             ))}
           </div>
         );
+      }
+      case "entity-bars": {
+        const list = a.topEntityDaily.slice(0, spec.limit ?? 10);
+        if (list.length === 0) return <Empty msg="Needs per-element history (a time dimension)" />;
+        return <EChart option={entityBarsOption(dark, list, a.measureLabel, a.measureIsPct)} height={H - 40} registerAs={spec.title} />;
       }
       case "gauge":
         return (
@@ -112,9 +129,10 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
         return <EChart option={busyHourOption(dark, a.busyHourProfile)} height={H - 40} registerAs={spec.title} />;
       case "pareto": {
         const byCong = spec.dataKey === "congestion";
+        const n = spec.limit ?? 12;
         const top = byCong
-          ? [...a.entityStats].sort((x, y) => y.congestedHours - x.congestedHours).filter((e) => e.congestedHours > 0).slice(0, 12)
-          : [...a.entityStats].sort((x, y) => y.avgUtil - x.avgUtil).slice(0, 12);
+          ? [...a.entityStats].sort((x, y) => y.congestedHours - x.congestedHours).filter((e) => e.congestedHours > 0).slice(0, n)
+          : [...a.entityStats].sort((x, y) => y.avgUtil - x.avgUtil).slice(0, n);
         if (top.length === 0) return <Empty msg="No congestion recorded — network is healthy" />;
         return (
           <EChart
@@ -165,6 +183,7 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
             measureLabel={a.measureLabel}
             isPct={a.measureIsPct}
             higherIsBad={a.measureHigherIsBad}
+            maxRows={spec.limit}
           />
         );
       case "table-regions":

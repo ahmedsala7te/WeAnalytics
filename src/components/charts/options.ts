@@ -655,6 +655,64 @@ export function correlationOption(dark: boolean, pairs: CorrelationPair[]): ECha
   };
 }
 
+/* ------------------- Per-element comparison (grouped bars) ----------------- */
+
+/**
+ * X = elements, one bar series per day (≤7 days) — "3 bars for every MSAN".
+ * Falls back to one line per element for longer histories.
+ */
+export function entityBarsOption(dark: boolean, series: NamedSeries[], measureLabel: string, isPct: boolean): EChartsOption {
+  const t = themeOf(dark);
+  const dayKeys = [...new Set(series.flatMap((s) => s.points.map((p) => p.t)))].sort((a, b) => a - b);
+
+  if (dayKeys.length <= 7) {
+    const fmtDay = (ms: number) =>
+      new Date(ms).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+    return {
+      ...base(t),
+      legend: legend(t),
+      grid: { ...GRID, bottom: 64 },
+      xAxis: {
+        type: "category",
+        data: series.map((s) => s.name),
+        axisLabel: { color: t.textMuted, fontSize: 9, rotate: 38, width: 90, overflow: "truncate" as const },
+        axisLine: { lineStyle: { color: t.axis } },
+        axisTick: { show: false },
+      },
+      yAxis: valueAxis(t, { pct: isPct, max: isPct ? 100 : undefined, name: measureLabel.toLowerCase() }),
+      series: dayKeys.map((day, di) => ({
+        name: fmtDay(day),
+        type: "bar" as const,
+        barGap: "10%",
+        emphasis: { focus: "series" as const },
+        itemStyle: { color: SERIES_COLORS[di % SERIES_COLORS.length], borderRadius: [3, 3, 0, 0] },
+        data: series.map((s) => {
+          const p = s.points.find((x) => x.t === day);
+          return p ? Math.round(p.v * 10) / 10 : null;
+        }),
+      })),
+    };
+  }
+
+  // long histories: one line per element (capped upstream)
+  return {
+    ...base(t),
+    legend: legend(t),
+    grid: GRID,
+    xAxis: timeAxis(t),
+    yAxis: valueAxis(t, { pct: isPct, max: isPct ? 100 : undefined }),
+    series: series.slice(0, 8).map((s) => ({
+      name: s.name,
+      type: "line" as const,
+      smooth: 0.25,
+      symbol: "none",
+      lineStyle: { width: 2 },
+      emphasis: { focus: "series" as const },
+      data: s.points.map((p) => [p.t, Math.round(p.v * 10) / 10]),
+    })),
+  };
+}
+
 /* ------------------------------- Chat charts ------------------------------- */
 
 export function chatChartOption(dark: boolean, c: ChatChart): EChartsOption {

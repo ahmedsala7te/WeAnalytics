@@ -22,6 +22,7 @@ type Art = Pick<
   | "distribution"
   | "correlations"
   | "congestionEvents"
+  | "topEntityDaily"
 > & { measureIsPct: boolean; measureLabel: string };
 
 function w(type: WidgetSpec["type"], title: string, span: 1 | 2 | 3 | 4, extra?: Partial<WidgetSpec>): WidgetSpec {
@@ -46,6 +47,10 @@ export function designDashboards(a: Art): DashboardSpec[] {
     const widgets: WidgetSpec[] = [w("kpi-grid", "Key Performance Indicators", 4, { dataKey: "generic" })];
     if (hasTrend) widgets.push(w("trend", `${label} Trend`, hasRegions ? 2 : 4, { dataKey: "regions" }));
     if (hasRegions) widgets.push(w("table-regions", "Regional Breakdown", 2));
+    // short multi-period reports: per-element daily comparison (grouped bars)
+    if (a.topEntityDaily.length > 1 && (a.topEntityDaily[0]?.points.length ?? 0) <= 7) {
+      widgets.push(w("entity-bars", `${label} by Element — Daily Comparison`, 4));
+    }
     widgets.push(w("pareto", `Top Elements by ${label}`, 2, { dataKey: "measure" }));
     if (a.distribution) widgets.push(w("histogram", `${label} Distribution`, 2));
     widgets.push(w("table-entities", `Worst Elements — ${label}`, hasRegions && a.distribution ? 4 : 2, { dataKey: "risk" }));

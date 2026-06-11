@@ -284,7 +284,8 @@ export type WidgetType =
   | "table-regions"
   | "anomalies"
   | "insights"
-  | "correlation";
+  | "correlation"
+  | "entity-bars";
 
 export interface WidgetSpec {
   id: string;
@@ -294,6 +295,12 @@ export interface WidgetSpec {
   span: 1 | 2 | 3 | 4;
   tall?: boolean;
   dataKey?: string;
+  /** top-N override for pareto / entity tables / entity-bars */
+  limit?: number;
+  /** kpi-grid: KPI names hidden from this grid (chat-edited) */
+  excludeKpis?: string[];
+  /** kpi-grid: KPI names appended beyond the default pick (chat-edited) */
+  extraKpis?: string[];
 }
 
 export interface DashboardSpec {
@@ -358,6 +365,8 @@ export interface AnalysisResult {
   measureHigherIsBad: boolean;
   /** note from the LLM data-understanding agent when it reshaped/remapped */
   transformNote?: string;
+  /** daily series (peak of the measure) for the top-risk elements — feeds per-element comparison charts */
+  topEntityDaily: NamedSeries[];
 }
 
 /* ------------------------------- Pipeline ------------------------------- */
@@ -376,6 +385,23 @@ export interface AgentProgressEvent {
   status: AgentStatus;
   note?: string;
 }
+
+/* --------------------------- Dashboard actions --------------------------- */
+
+export type DashboardAction =
+  | { kind: "filter-regions"; regions: string[] }
+  | { kind: "filter-dates"; lastDays?: number; clear?: boolean }
+  | { kind: "filter-search"; search: string }
+  | { kind: "filter-technology"; technology: string | null }
+  | { kind: "reset-filters" }
+  | { kind: "switch-persona"; persona: PersonaId }
+  | { kind: "add-widget"; widget: WidgetSpec }
+  | { kind: "remove-widget"; titleMatch: string }
+  | { kind: "resize-widget"; titleMatch: string; span: 1 | 2 | 3 | 4 }
+  | { kind: "set-limit"; titleMatch: string; limit: number }
+  | { kind: "remove-kpi"; kpiMatch: string }
+  | { kind: "add-kpi"; kpiMatch: string }
+  | { kind: "reset-dashboard" };
 
 /* --------------------------------- Chat --------------------------------- */
 
@@ -398,6 +424,12 @@ export interface ChatMessage {
   streaming?: boolean;
   /** which engine produced this reply: "rules" or a model name */
   engine?: string;
+  /** human-readable list of dashboard changes that were applied */
+  applied?: string[];
+  /** dashboard changes that could not be applied */
+  failed?: string[];
+  /** smart offer: parsed-but-not-applied actions (answer mode) */
+  suggestedActions?: DashboardAction[];
 }
 
 /* ------------------------------ Local LLM -------------------------------- */
