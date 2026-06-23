@@ -23,6 +23,7 @@ import { SAMPLES } from "@/data/sampleGenerator";
 import { ingestFile } from "@/agents/ingestion";
 import { useAppStore } from "@/store/useAppStore";
 import { fmtBytes, fmtNum, fmtTimeAgo } from "@/lib/format";
+import type { Dataset } from "@/lib/types";
 
 const FORMATS = [
   { icon: FileSpreadsheet, label: "Excel (.xlsx)" },
@@ -43,6 +44,7 @@ const JOURNEY = [
 
 export function HomePage() {
   const ingestAndAnalyze = useAppStore((s) => s.ingestAndAnalyze);
+  const ingestAndAnalyzeMany = useAppStore((s) => s.ingestAndAnalyzeMany);
   const datasets = useAppStore((s) => s.datasets);
   const analyses = useAppStore((s) => s.analyses);
   const activeId = useAppStore((s) => s.activeDatasetId);
@@ -59,20 +61,25 @@ export function HomePage() {
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
-      const file = files?.[0];
-      if (!file) return;
+      const list = files ? Array.from(files) : [];
+      if (list.length === 0) return;
       setError(null);
       setParsing(true);
-      try {
-        const dataset = await ingestFile(file);
-        setParsing(false);
-        await ingestAndAnalyze(dataset);
-      } catch (e) {
-        setParsing(false);
-        setError(e instanceof Error ? e.message : "Failed to parse this file.");
+      const datasets: Dataset[] = [];
+      const errors: string[] = [];
+      for (const file of list) {
+        try {
+          datasets.push(await ingestFile(file));
+        } catch (e) {
+          errors.push(`${file.name}: ${e instanceof Error ? e.message : "parse failed"}`);
+        }
       }
+      setParsing(false);
+      if (errors.length) setError(`Couldn't read ${errors.length} file(s): ${errors.join(" · ")}`);
+      if (datasets.length === 1) await ingestAndAnalyze(datasets[0]);
+      else if (datasets.length > 1) await ingestAndAnalyzeMany(datasets);
     },
-    [ingestAndAnalyze]
+    [ingestAndAnalyze, ingestAndAnalyzeMany]
   );
 
   const loadSample = useCallback(
@@ -142,6 +149,7 @@ export function HomePage() {
           <input
             ref={fileInput}
             type="file"
+            multiple
             accept=".csv,.tsv,.txt,.xlsx,.xls,.json,.xml,.zip"
             className="hidden"
             onChange={(e) => void handleFiles(e.target.files)}
@@ -155,7 +163,7 @@ export function HomePage() {
           <h3 className="mt-4 text-[16px] font-bold text-primary">
             {parsing ? "Parsing file…" : dragOver ? "Release to analyze" : "Drag & drop your dataset here"}
           </h3>
-          <p className="mt-1 text-[12.5px] text-muted">or click to browse · up to 250K rows analyzed in-browser</p>
+          <p className="mt-1 text-[12.5px] text-muted">or click to browse · select multiple files at once · up to 250K rows each, in-browser</p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
             {FORMATS.map((f) => (
               <span key={f.label} className="flex items-center gap-1.5 rounded-full border border-subtle bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-secondary">

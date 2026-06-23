@@ -70,6 +70,9 @@ export function computeIntelligence(frame: Frame, mapping: SemanticMapping, isTe
   for (let i = 0; i < n; i++) {
     const v = value ? value[i] : null;
     if (v === null) continue;
+    // skip grand-total / aggregate rows ("active", "total"…) — they would
+    // dwarf every real category in the breakdown
+    if (frame.aggregateMask && frame.aggregateMask[i]) continue;
     const ent = entity ? entity[i] : "All elements";
     const reg = region ? region[i] : "All regions";
     const time = t[i];
@@ -185,7 +188,9 @@ export function computeIntelligence(frame: Frame, mapping: SemanticMapping, isTe
     if (days.length >= 5) {
       const ys = days.map((d) => a.dailyPeak.get(d)!);
       const lr = linreg(days, ys);
-      growthPctPerWeek = lr.slope * 7;
+      // for utilization %, slope×7 already reads as percentage points; for any
+      // other measure normalize by the mean so it's a true %-change per week
+      growthPctPerWeek = valueIsPct ? lr.slope * 7 : avg > 0 ? ((lr.slope * 7) / avg) * 100 : 0;
       if (valueIsPct && p95 < THRESHOLDS.saturation) {
         const holt = holtForecast(ys, THRESHOLDS.saturationLookaheadDays);
         const idx = holt.forecast.findIndex((f) => f >= THRESHOLDS.saturation);

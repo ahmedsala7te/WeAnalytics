@@ -1,4 +1,4 @@
-import { toEpoch, toNum } from "./profiling";
+import { isAggregateLabel, measureKind, toEpoch, toNum } from "./profiling";
 import type { Dataset, SemanticMapping } from "@/lib/types";
 
 /* ------------------------------------------------------------------------
@@ -24,11 +24,17 @@ export interface Frame {
   packetLoss: (number | null)[] | null;
   measure: (number | null)[] | null;
   measureName: string;
+  /** stock (point-in-time level) vs flow (accumulates over a period) */
+  measureKind: "stock" | "flow";
   hasTime: boolean;
   timeStart: number;
   timeEnd: number;
   entities: string[];
   regions: string[];
+  /** per-row: true when the entity value is a grand-total / aggregate ("active", "total"…) */
+  aggregateMask: boolean[] | null;
+  /** true when any aggregate rows were detected and excluded from breakdowns */
+  hasAggregateRows: boolean;
 }
 
 export function extractFrame(dataset: Dataset, mapping: SemanticMapping): Frame {
@@ -74,8 +80,24 @@ export function extractFrame(dataset: Dataset, mapping: SemanticMapping): Frame 
   const entity = strCol(mapping.entity);
   const region = strCol(mapping.region);
 
-  const entities = entity ? uniqueLimited(entity, 5000) : [];
-  const regions = region ? uniqueLimited(region, 200) : [];
+  // aggregate-row detection: a category value that is a grand total ("active",
+  // "total"…) or — when there's no time axis — a value whose measure magnitude
+  // dwarfs the rest. Such rows are excluded from per-entity breakdowns.
+  let aggregateMask: boolean[] | null = null;
+  let hasAggregateRows = false;
+  if (entity) {
+    aggregateMask = new Array(n).fill(false);
+    for (let i = 0; i < n; i++) {
+      if (isAggregateLabel(entity[i])) {
+        aggregateMask[i] = true;
+        hasAggregateRows = true;
+      }
+    }
+  }
+
+  const realEntity = (i: number) => !aggregateMask || !aggregateMask[i];
+  const entities = entity ? uniqueLimited(entity.filter((_, i) => realEntity(i)), 5000) : [];
+  const regions = region ? uniqueLimited(region.filter((_, i) => realEntity(i)), 200) : [];
 
   return {
     n,
@@ -95,11 +117,18 @@ export function extractFrame(dataset: Dataset, mapping: SemanticMapping): Frame 
     packetLoss: numCol(mapping.packetLoss),
     measure: measureCol,
     measureName: mapping.primaryMeasure ?? "Value",
+    measureKind: mapping.primaryMeasure
+      ? mapping.primaryMeasure === mapping.utilization
+        ? "stock"
+        : measureKind(mapping.primaryMeasure)
+      : "flow",
     hasTime,
     timeStart: hasTime ? timeStart : 0,
     timeEnd: hasTime ? timeEnd : 0,
     entities,
     regions,
+    aggregateMask,
+    hasAggregateRows,
   };
 }
 

@@ -135,6 +135,32 @@ export function measureLooksBad(name: string): boolean {
   return /(critical|warning|alarm|fault|outage|down|loss|drop|discard|error|fail|congest|complaint|churn|delay|latency|mttr)/.test(n) || /(انذار|إنذار|عطل|اعطال|أعطال|انقطاع)/.test(n);
 }
 
+/**
+ * A category value that is a grand-total / aggregate rather than a real member
+ * (e.g. "active", "total", "all", "grand total"). Such rows must be excluded
+ * from per-entity breakdowns or they dwarf every real category.
+ */
+export function isAggregateLabel(s: string): boolean {
+  const n = s.toLowerCase().trim();
+  return /^(active|total|totals|all|all elements|grand ?total|overall|sum|aggregate|combined|consolidated|إجمالي|الإجمالي|اجمالي|الاجمالي|الكل|المجموع|اجمالى)$/.test(n);
+}
+
+/**
+ * Stock vs flow classification of a numeric measure.
+ *  - "stock": a level/count measured at a point in time (subscribers, headcount,
+ *    utilization %, availability) — aggregate over TIME by latest/mean, never sum.
+ *  - "flow": an amount accumulated over a period (volume, traffic, revenue,
+ *    units, calls, alarms) — sum or daily-average over time.
+ */
+export function measureKind(name: string, semantic?: SemanticTag): "stock" | "flow" {
+  if (semantic === "subscribers" || semantic === "utilization" || semantic === "availability" || semantic === "capacity") return "stock";
+  if (semantic === "traffic" || semantic === "alarms" || semantic === "critical_alarms" || semantic === "revenue" || semantic === "quantity") return "flow";
+  const n = norm(name);
+  if (/(subscriber|customer|user|headcount|count|active|level|inventory|stock|balance|ratio|percent|score|util|occupanc|avail|temperature|gauge|onhand|مشترك|عملاء|عدد)/.test(n)) return "stock";
+  if (/(volume|traffic|throughput|revenue|sales|units|sold|amount|orders|visits|calls|minutes|requests|bytes|tib|tb|gb|mb|kb|erlang|usage|consumption|تداول|استهلاك|حجم)/.test(n)) return "flow";
+  return "flow";
+}
+
 function matchSemantic(name: string): { tag: SemanticTag; priority: number } {
   const n = norm(name);
   let best: { tag: SemanticTag; priority: number } = { tag: "none", priority: 0 };
@@ -248,29 +274,32 @@ function buildMapping(profile: ColumnProfile[], dataset: Dataset): SemanticMappi
     profile.find((p) => p.role === "datetime");
   if (ts) mapping.timestamp = ts.name;
 
-  // region: semantic region, else low-cardinality categorical (2..60 distinct)
-  const region =
-    pickBest(profile, "region", ["categorical", "identifier", "text"]) ??
-    profile
-      .filter((p) => p.role === "categorical" && p.distinct >= 2 && p.distinct <= 60 && p.semantic === "none")
-      .sort((a, b) => a.distinct - b.distinct)[0];
-  if (region) mapping.region = region.name;
-
+  // region: ONLY a genuine geography dimension (semantic match). A plain
+  // low-cardinality categorical like "Service Plan" is a breakdown dimension,
+  // not a region — it becomes the entity below.
+  let regionName = pickBest(profile, "region", ["categorical", "identifier", "text"])?.name;
   mapping.city = pickBest(profile, "city")?.name;
 
-  // entity: semantic entity with highest cardinality, excluding the region column
-  const entityRank = (p: ColumnProfile) => (p.semantic === "entity" ? 2 : p.semantic === "interface" ? 1 : 0);
-  const entityCands = profile
-    .filter(
-      (p) =>
-        p.name !== mapping.region &&
-        p.name !== mapping.city &&
-        ["entity", "interface", "none"].includes(p.semantic) &&
-        (p.role === "categorical" || p.role === "identifier") &&
-        p.distinct >= 2
-    )
-    .sort((a, b) => entityRank(b) - entityRank(a) || b.distinct - a.distinct);
-  if (entityCands[0]) mapping.entity = entityCands[0].name;
+  // entity: the dimension the analysis is broken down by. Prefer a semantic
+  // entity/identifier; otherwise any plain categorical (incl. low-cardinality).
+  const entityRank = (p: ColumnProfile) =>
+    p.semantic === "entity" ? 3 : p.semantic === "interface" ? 2 : p.semantic === "none" ? 1 : 0;
+  const isDimension = (p: ColumnProfile) =>
+    (p.role === "categorical" || p.role === "identifier") &&
+    p.distinct >= 2 &&
+    p.name !== regionName &&
+    p.name !== mapping.city &&
+    !["technology", "vendor", "severity"].includes(p.semantic);
+  const dims = profile.filter(isDimension).sort((a, b) => entityRank(b) - entityRank(a) || b.distinct - a.distinct);
+  if (dims[0]) mapping.entity = dims[0].name;
+
+  // if there's no geographic region but multiple breakdown dimensions, the
+  // lowest-cardinality remaining one acts as the grouping (region) axis.
+  if (!regionName) {
+    const groupDim = dims.filter((p) => p.name !== mapping.entity).sort((a, b) => a.distinct - b.distinct)[0];
+    if (groupDim) regionName = groupDim.name;
+  }
+  if (regionName) mapping.region = regionName;
 
   const numericByTag = (tag: SemanticTag) =>
     profile.find((p) => p.semantic === tag && p.role === "numeric" && p.nullPct < 60)?.name;

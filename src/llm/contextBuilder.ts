@@ -12,7 +12,12 @@ export function buildAnalysisDigest(a: AnalysisResult): string {
   L.push(`DATASET: ${a.datasetName} — ${a.rowsAnalyzed.toLocaleString()} rows`);
   if (a.timeRange) L.push(`WINDOW: ${fmtDate(a.timeRange.start)} to ${fmtDate(a.timeRange.end)} (${a.timeRange.days} days)`);
   L.push(`DOMAIN: ${a.domains.slice(0, 2).map((d) => `${d.domain} ${d.confidence}%`).join(", ")}`);
-  L.push(`NETWORK HEALTH SCORE: ${a.healthScore.toFixed(1)}/100`);
+  // a network-utilization health score only applies when there's a utilization %
+  if (a.measureIsPct) {
+    L.push(`NETWORK HEALTH SCORE: ${a.healthScore.toFixed(1)}/100`);
+  } else {
+    L.push(`ANALYSIS TYPE: ${a.measureLabel} breakdown by ${a.entityStats.length} segments — this is NOT a congestion/utilization dataset, do not describe it as network health or congestion.`);
+  }
 
   L.push(`\nKPIs (value | change vs prior week | status):`);
   for (const k of a.kpis.slice(0, 14)) {
@@ -101,14 +106,17 @@ export function buildAnalysisDigest(a: AnalysisResult): string {
 }
 
 export function buildChatSystemPrompt(a: AnalysisResult): string {
-  return `You are the AI copilot inside NetPulse, a telecom network intelligence platform used by NOC engineers, capacity planners and executives. A deterministic analytics pipeline has already analyzed the uploaded dataset. Its complete findings are below — this is your ONLY source of truth.
+  const congestionLine = a.measureIsPct
+    ? "- Thresholds used by the platform: congestion ≥90% utilization, critical ≥95%, chronic = congested ≥5 days in 14, SLA target 99.9% availability."
+    : `- This dataset has NO utilization/congestion metric. It is a ${a.measureLabel} breakdown across ${a.entityStats.length} segments. Do NOT mention congestion, saturation, network health scores, or alarms — they do not apply. Talk in terms of ${a.measureLabel}, subscribers, segments, shares and growth.`;
+  return `You are the AI copilot inside NetPulse, a telecom network intelligence platform. A deterministic analytics pipeline has already analyzed the uploaded dataset. Its complete findings are below — this is your ONLY source of truth.
 
 RULES:
 - Answer ONLY from the findings below. Never invent numbers, elements, regions or dates. If the findings don't contain the answer, say so plainly and suggest what data would be needed.
 - Be concise and operational: lead with the answer, then 2-4 supporting facts. Use exact numbers from the findings.
 - Use **bold** for key numbers and element names. Use short bullet lists where helpful. No headers, no tables.
-- Thresholds used by the platform: congestion ≥90% utilization, critical ≥95%, chronic = congested ≥5 days in 14, SLA target 99.9% availability.
-- You may recommend actions (capacity expansion, rebalancing, transmission checks) grounded in the findings.
+${congestionLine}
+- You may recommend grounded actions based on the findings.
 
 === ANALYSIS FINDINGS ===
 ${buildAnalysisDigest(a)}
@@ -116,10 +124,13 @@ ${buildAnalysisDigest(a)}
 }
 
 export function buildNarrativePrompt(a: AnalysisResult): { system: string; user: string } {
+  const lead = a.measureIsPct
+    ? "leads with network health and the single most important fact"
+    : `leads with the headline ${a.measureLabel}/subscriber figure — do NOT mention "network health score", congestion or saturation (this dataset has no utilization metric)`;
   return {
-    system: `You are the executive storytelling agent of a telecom network intelligence platform. You write crisp, board-ready narrative for a CTO based STRICTLY on analysis findings provided by the user. Never invent numbers or names; copy element IDs, region names and figures EXACTLY as written in the findings. Respond with VALID JSON only, matching exactly this schema:
+    system: `You are the executive storytelling agent of a telecom analytics platform. You write crisp, board-ready narrative for a CTO based STRICTLY on analysis findings provided by the user. Never invent numbers or names; copy element IDs, region names and figures EXACTLY as written in the findings. Respond with VALID JSON only, matching exactly this schema:
 {"headline": string, "summary": string, "keyInsights": string[], "risks": string[], "recommendations": string[]}
-Constraints: headline ≤ 28 words, punchy, leads with network health and the single most important fact. summary = one paragraph of 3-5 sentences. keyInsights = 4-6 bullets, each ≤ 30 words with concrete numbers. risks = 2-4 bullets. recommendations = 3-5 imperative bullets, prioritized, with timeframes where the findings support them.`,
+Constraints: headline ≤ 28 words, punchy, ${lead}. summary = one paragraph of 3-5 sentences. keyInsights = 4-6 bullets, each ≤ 30 words with concrete numbers. risks = 2-4 bullets. recommendations = 3-5 imperative bullets, prioritized, with timeframes where the findings support them.`,
     user: `Write the executive narrative for this analysis:\n\n${buildAnalysisDigest(a)}`,
   };
 }

@@ -23,7 +23,7 @@ type Art = Pick<
   | "correlations"
   | "congestionEvents"
   | "topEntityDaily"
-> & { measureIsPct: boolean; measureLabel: string };
+> & { measureIsPct: boolean; measureLabel: string; measureHigherIsBad: boolean };
 
 function w(type: WidgetSpec["type"], title: string, span: 1 | 2 | 3 | 4, extra?: Partial<WidgetSpec>): WidgetSpec {
   return { id: uid("w"), type, title, span, ...extra };
@@ -44,16 +44,28 @@ export function designDashboards(a: Art): DashboardSpec[] {
   // utilization percentage (assurance reports, alarm extracts, KPI lists…)
   if (!a.isTelecom || !a.measureIsPct) {
     const label = a.measureLabel;
+    const bad = a.measureHigherIsBad;
+    const hasSubs = a.entityStats.some((e) => (e.subscribers ?? 0) > 0);
+    const hasEntities = a.entityStats.length > 1;
     const widgets: WidgetSpec[] = [w("kpi-grid", "Key Performance Indicators", 4, { dataKey: "generic" })];
-    if (hasTrend) widgets.push(w("trend", `${label} Trend`, hasRegions ? 2 : 4, { dataKey: "regions" }));
+    if (hasTrend) widgets.push(w("trend", `${label} Trend`, hasRegions || hasEntities ? 2 : 4, { dataKey: "regions" }));
+    // segment mix: subscribers by segment when present, else the measure
+    if (hasEntities && hasSubs) widgets.push(w("pareto", "Subscribers by Segment", 2, { dataKey: "subscribers" }));
     if (hasRegions) widgets.push(w("table-regions", "Regional Breakdown", 2));
     // short multi-period reports: per-element daily comparison (grouped bars)
     if (a.topEntityDaily.length > 1 && (a.topEntityDaily[0]?.points.length ?? 0) <= 7) {
       widgets.push(w("entity-bars", `${label} by Element — Daily Comparison`, 4));
     }
-    widgets.push(w("pareto", `Top Elements by ${label}`, 2, { dataKey: "measure" }));
+    widgets.push(w("pareto", `Top Segments by ${label}`, 2, { dataKey: "measure" }));
     if (a.distribution) widgets.push(w("histogram", `${label} Distribution`, 2));
-    widgets.push(w("table-entities", `Worst Elements — ${label}`, hasRegions && a.distribution ? 4 : 2, { dataKey: "risk" }));
+    widgets.push(
+      w(
+        "table-entities",
+        bad ? `Worst Elements — ${label}` : hasSubs ? "Segment Breakdown" : `Top Segments — ${label}`,
+        hasRegions && a.distribution ? 4 : 2,
+        { dataKey: bad ? "risk" : "breakdown" }
+      )
+    );
     if (hasForecast) widgets.push(w("forecast", `${label} Forecast`, 4, { dataKey: "0" }));
     if (hasAnomalies) widgets.push(w("anomalies", "Detected Anomalies", 2));
     widgets.push(w("insights", "AI Insights", hasAnomalies ? 2 : 4, { tall: true }));

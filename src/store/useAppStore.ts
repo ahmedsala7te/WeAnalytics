@@ -89,6 +89,7 @@ interface AppState {
 
   /* orchestration */
   ingestAndAnalyze: (dataset: Dataset) => Promise<void>;
+  ingestAndAnalyzeMany: (datasets: Dataset[]) => Promise<void>;
   selectDataset: (id: string) => void;
   removeDataset: (id: string) => void;
 }
@@ -579,6 +580,36 @@ export const useAppStore = create<AppState>()(
         } catch (err) {
           set({ pipelineRunning: false, pipelineVisible: false });
           throw err;
+        }
+      },
+
+      ingestAndAnalyzeMany: async (datasets) => {
+        if (datasets.length === 0) return;
+        // first file gets the theatrical overlay; the rest analyze in the
+        // background and join the session list as they finish
+        await get().ingestAndAnalyze(datasets[0]);
+        const llm = get().llm;
+        for (let i = 1; i < datasets.length; i++) {
+          const ds = datasets[i];
+          set({ datasets: [...get().datasets.filter((d) => d.id !== ds.id), ds].slice(-8) });
+          get().logAudit("UPLOAD", `${ds.name} (${ds.rowCount.toLocaleString()} rows, ${ds.fileType})`);
+          try {
+            const analysis = await runPipeline(ds, {
+              theatrical: false,
+              assist:
+                llm.status === "connected" && llm.model
+                  ? (d, profile) => runMappingAssist(d, profile, { baseUrl: llm.baseUrl, model: llm.model! })
+                  : undefined,
+              onDatasetTransformed: (transformed) => {
+                set({ datasets: get().datasets.map((d) => (d.id === ds.id ? { ...transformed, id: ds.id, name: ds.name } : d)) });
+              },
+            });
+            set({ analyses: { ...get().analyses, [ds.id]: analysis } });
+            get().logAudit("ANALYZE", `${ds.name}: ${analysis.domains[0]?.domain} ${analysis.domains[0]?.confidence}% · ${analysis.kpis.length} KPIs`);
+            void get().enhanceStory(ds.id);
+          } catch {
+            // skip a file that fails; the others still land
+          }
         }
       },
 

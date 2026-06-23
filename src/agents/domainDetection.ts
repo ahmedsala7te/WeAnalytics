@@ -28,6 +28,8 @@ const SIGNATURES: DomainSignature[] = [
       /availability|uptime|outage/i,
       /hostname|exchange|سنترال|قطاع|منطقة/i,
       /upgrade|capacity|سعة/i,
+      /\d+\s?mbps|\d+\s?gbps|broadband|fiber|fibre|ftth|gpon|adsl|vdsl|dsl/i,
+      /service\s?plan|tariff|tier|package/i,
     ],
     semanticBoost: [
       { tag: "utilization", weight: 18 },
@@ -111,7 +113,12 @@ const SIGNATURES: DomainSignature[] = [
 ];
 
 export function detectDomains(profile: ColumnProfile[], mapping: SemanticMapping): DomainScore[] {
-  const colNames = profile.map((p) => p.name).join(" | ");
+  // fingerprint includes a few sample VALUES, not just column names — this lets
+  // value patterns like "30Mbps", "GPON" or "active" inform the domain.
+  const colNames =
+    profile.map((p) => p.name).join(" | ") +
+    " || " +
+    profile.flatMap((p) => p.samples.slice(0, 3)).join(" | ");
   const scores: DomainScore[] = SIGNATURES.map((sig) => {
     let score = 0;
     let hits = 0;

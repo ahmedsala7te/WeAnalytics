@@ -62,7 +62,7 @@ export function EntityTable({
   maxRows,
 }: {
   entities: EntityStat[];
-  mode: "risk" | "saturation" | "congestion";
+  mode: "risk" | "saturation" | "congestion" | "breakdown";
   measureLabel?: string;
   isPct?: boolean;
   higherIsBad?: boolean;
@@ -97,6 +97,51 @@ export function EntityTable({
 
   const clean = measureLabel.replace(/^(average|avg)\s+/i, "");
   const shortLabel = clean.length > 14 ? `${clean.slice(0, 13)}…` : clean;
+
+  /* ----------------------- segment breakdown (healthy mix) ----------------- */
+  if (mode === "breakdown") {
+    const hasSubs = entities.some((e) => (e.subscribers ?? 0) > 0);
+    const sorted = [...entities].sort((a, b) =>
+      hasSubs ? (b.subscribers ?? 0) - (a.subscribers ?? 0) : b.avgUtil - a.avgUtil
+    );
+    const subsTotal = sorted.reduce((s, e) => s + (e.subscribers ?? 0), 0) || 1;
+    const measTotal = sorted.reduce((s, e) => s + e.avgUtil, 0) || 1;
+    const rows2 = sorted.slice(0, maxRows ?? 12);
+    return (
+      <div className="h-full overflow-auto rounded-lg border border-subtle">
+        <table className="w-full border-collapse text-[12px]">
+          <thead>
+            <tr>
+              <Th label="Segment" />
+              {hasSubs && <Th label="Subscribers" />}
+              <Th label={`Avg ${shortLabel}`} />
+              <Th label="Share" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows2.map((e) => {
+              const share = hasSubs ? ((e.subscribers ?? 0) / subsTotal) * 100 : (e.avgUtil / measTotal) * 100;
+              return (
+                <tr key={e.entity} className="border-t border-subtle transition-colors hover:bg-surface-2">
+                  <td className="px-3 py-2 font-semibold text-primary">{e.entity}</td>
+                  {hasSubs && <td className="px-3 py-2 tabular-nums text-secondary">{fmtNum(e.subscribers ?? 0, 0)}</td>}
+                  <td className="px-3 py-2 tabular-nums text-secondary">{fmtNum(e.avgUtil)}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-inset">
+                        <div className="h-full rounded-full bg-accent-500" style={{ width: `${Math.min(100, share)}%` }} />
+                      </div>
+                      <span className="tabular-nums text-[11.5px] font-semibold text-secondary">{share.toFixed(1)}%</span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full overflow-auto rounded-lg border border-subtle">

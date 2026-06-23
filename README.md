@@ -124,6 +124,23 @@ The profiling agent handles considerably messy real files:
 - **LLM Data Understanding agent** (when Ollama is connected): for files the heuristics can't anchor (weak domain
   signal or no usable measure), the local LLM proposes the semantic mapping; every suggestion is validated against
   the actual data before being applied, and the heuristic result stands if the model is wrong.
+- **Breakdown-dimension datasets** (e.g. subscribers + traffic volume by service plan): a single categorical like
+  `Service Plan` is recognized as the entity to break down by (not a region), so the dashboard shows a real segment
+  mix instead of one "All elements" bar.
+- **Aggregate / total rows** (`active`, `total`, `all`, الإجمالي…) are detected and excluded from per-segment
+  breakdowns, and used as the authoritative grand total where appropriate — they never dwarf the real categories.
+- **Stock vs flow measures**: counts/levels (subscribers, utilization) are reported point-in-time (latest, never
+  summed across days); volumes/traffic/revenue are summed or daily-averaged. This is why a subscriber base reads as
+  ~11.5M, not a nonsensical sum-over-days. Subscriber/traffic datasets get the right KPIs — Total Subscribers,
+  Daily Volume, **Data per Subscriber (GB/day)**, segment mix and growth — and a subscriber/traffic dashboard rather
+  than congestion framing.
+
+## Multiple files at once
+
+The Data Hub accepts **multiple files in one drop or selection**. Each becomes its own analyzed dataset: the first
+runs with the live agent overlay, the rest analyze in the background and appear in the session list as they finish.
+Switch between them from the **Session datasets** list. Every file is parsed and analyzed independently (a failed
+file is skipped with a message; the others still land).
 
 ## Notes & limits
 

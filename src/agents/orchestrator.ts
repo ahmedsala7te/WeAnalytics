@@ -165,7 +165,8 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     rootCauses,
     fc.forecasts,
     intel.healthScore,
-    measureIsPct
+    measureIsPct,
+    !!mapping.measureHigherIsBad && !measureIsPct
   );
   emit("story", "done", "Narrative + insight feed ready");
   await pace(420);
@@ -175,6 +176,7 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     isTelecom,
     measureIsPct,
     measureLabel,
+    measureHigherIsBad: !!mapping.measureHigherIsBad && !measureIsPct,
     kpis,
     heatmap: intel.heatmap,
     dailyTrend: intel.dailyTrend,

@@ -35,6 +35,8 @@ function buildDaily(frame: Frame, events: CongestionEvent[], isTelecom: boolean)
   for (let i = 0; i < frame.n; i++) {
     const t = frame.t[i];
     if (t === null) continue;
+    // exclude grand-total / aggregate rows so daily sums reflect real members
+    if (frame.aggregateMask && frame.aggregateMask[i]) continue;
     const d = Math.floor((t - frame.timeStart) / DAY_MS);
     let cur = byDay.get(d);
     if (!cur) {
@@ -121,6 +123,30 @@ function buildDaily(frame: Frame, events: CongestionEvent[], isTelecom: boolean)
     events: days.map((d) => evByDay.get(d) ?? 0),
     congestedEntities: days.map((d) => congEntByDay.get(d)?.size ?? 0),
   };
+}
+
+/**
+ * Per-day total of a column that is robust to grand-total ("active") rows:
+ * each day's total = max( sum of real-member rows, largest aggregate-row value ).
+ * This gives the right answer whether the listed members fully cover the total
+ * (volume) or only partially (subscribers with unlisted tiers).
+ */
+function dailyTotals(frame: Frame, col: (number | null)[]): { days: number[]; totals: number[] } {
+  const real = new Map<number, number>();
+  const agg = new Map<number, number>();
+  for (let i = 0; i < frame.n; i++) {
+    const t = frame.t[i];
+    const v = col[i];
+    if (t === null || v === null || v === undefined) continue;
+    const d = Math.floor((t - frame.timeStart) / DAY_MS);
+    if (frame.aggregateMask && frame.aggregateMask[i]) {
+      agg.set(d, Math.max(agg.get(d) ?? 0, v));
+    } else {
+      real.set(d, (real.get(d) ?? 0) + v);
+    }
+  }
+  const days = [...new Set([...real.keys(), ...agg.keys()])].sort((a, b) => a - b);
+  return { days, totals: days.map((d) => Math.max(real.get(d) ?? 0, agg.get(d) ?? 0)) };
 }
 
 function splitWindows<T>(arr: T[]): { cur: T[]; prev: T[] } {
@@ -475,35 +501,121 @@ export function discoverKpis(
       });
     }
   } else {
-    /* ------------------------- Generic dataset KPIs ------------------------- */
+    /* ------------- Breakdown / measure-mode KPIs (stock + flow aware) -------- */
     const measure = frame.measure;
     const label = titleCase(frame.measureName);
+    const isFlow = frame.measureKind === "flow";
     const goodDir: Kpi["goodWhen"] = higherIsBad ? "low" : "high";
-    if (measure) {
-      const vals = measure.filter((x): x is number => x !== null);
-      const total = vals.reduce((a, b) => a + b, 0);
-      if (daily && daily.days.length >= 2) {
-        const wm = splitWindows(daily.measureSum);
-        const cur = wm.cur.reduce((a, b) => a + b, 0);
-        const prev = wm.prev.length ? wm.prev.reduce((a, b) => a + b, 0) : null;
-        const worse = prev !== null && (higherIsBad ? cur > prev * 1.1 : cur < prev * 0.9);
+
+    // primary measure daily totals (aggregate-aware: "active"/total rows excluded)
+    const dt = measure ? dailyTotals(frame, measure) : { days: [], totals: [] };
+    const hasDailyMeasure = dt.totals.length >= 1;
+
+    /* --- Subscribers (a stock): lead with the real base, not a sum-over-days --- */
+    let subsLatest = 0;
+    if (frame.subscribers) {
+      const ds = dailyTotals(frame, frame.subscribers);
+      if (ds.totals.length >= 1) {
+        subsLatest = ds.totals[ds.totals.length - 1];
+        const ws = splitWindows(ds.totals);
+        const prevSubs = ws.prev.length ? mean(ws.prev) : null;
+        add({
+          name: "Total Subscribers",
+          category: "executive",
+          value: subsLatest,
+          unit: "count",
+          previous: prevSubs,
+          changePct: change(subsLatest, prevSubs),
+          goodWhen: "high",
+          status: "healthy",
+          spark: ds.totals,
+          description: "Active subscriber base on the most recent day (point-in-time count, not summed across days).",
+          formula: "latest day total subscribers (aggregate-aware)",
+        });
+        if (ds.days.length >= 3) {
+          const lr = linreg(ds.days, ds.totals);
+          const g = mean(ds.totals) > 0 ? ((lr.slope * 7) / mean(ds.totals)) * 100 : 0;
+          add({
+            name: "Subscriber Growth",
+            category: "executive",
+            value: g,
+            unit: "pct/wk",
+            previous: null,
+            changePct: null,
+            goodWhen: "high",
+            status: g >= 0 ? "healthy" : "warning",
+            spark: ds.totals,
+            description: "Week-over-week trend of the subscriber base.",
+            formula: "OLS slope(daily subscribers) × 7 ÷ mean",
+          });
+        }
+      }
+    }
+
+    /* --- Primary measure headline --- */
+    if (measure && hasDailyMeasure) {
+      const latest = dt.totals[dt.totals.length - 1];
+      const windowSum = dt.totals.reduce((a, b) => a + b, 0);
+      const avgDaily = mean(dt.totals);
+      const wm = splitWindows(dt.totals);
+      const curAgg = isFlow ? wm.cur.reduce((a, b) => a + b, 0) : mean(wm.cur);
+      const prevAgg = wm.prev.length ? (isFlow ? wm.prev.reduce((a, b) => a + b, 0) : mean(wm.prev)) : null;
+
+      if (isFlow && frame.hasTime) {
+        add({
+          name: `${label} (latest day)`,
+          category: "generic",
+          value: latest,
+          unit: "raw",
+          previous: dt.totals.length >= 2 ? dt.totals[dt.totals.length - 2] : null,
+          changePct: dt.totals.length >= 2 ? change(latest, dt.totals[dt.totals.length - 2]) : null,
+          goodWhen: goodDir,
+          status: "healthy",
+          spark: dt.totals,
+          description: `Total ${label} on the most recent day across all segments.`,
+          formula: `Σ ${frame.measureName} on latest day`,
+        });
+      } else {
+        const worse = prevAgg !== null && (higherIsBad ? curAgg > prevAgg * 1.1 : curAgg < prevAgg * 0.9);
         add({
           name: `${label} (current vs prior)`,
           category: "generic",
-          value: cur,
+          value: curAgg,
           unit: "raw",
-          previous: prev,
-          changePct: change(cur, prev),
+          previous: prevAgg,
+          changePct: change(curAgg, prevAgg),
           goodWhen: goodDir,
           status: worse ? "warning" : "healthy",
-          spark: daily.measureSum,
-          description: `Total ${label} in the current window vs the prior one.`,
-          formula: `sum(${frame.measureName})`,
+          spark: dt.totals,
+          description: `${label} in the current window vs the prior one.`,
+          formula: isFlow ? `sum(${frame.measureName})` : `mean(${frame.measureName})`,
         });
-        const lr = linreg(daily.days, daily.measureSum);
-        const growth = mean(daily.measureSum) > 0 ? ((lr.slope * 7) / mean(daily.measureSum)) * 100 : 0;
+      }
+
+      // data-per-subscriber ratio (flow ÷ subscriber base)
+      if (isFlow && subsLatest > 0) {
+        const tib = /tib|tebibyte/i.test(frame.measureName) || /\btb\b|terabyte/i.test(frame.measureName);
+        const perSub = (latest / subsLatest) * (tib ? 1024 : 1);
         add({
-          name: higherIsBad ? "Degradation Trend" : "Growth Rate",
+          name: tib ? "Data per Subscriber (GB/day)" : `${label} per Subscriber`,
+          category: "executive",
+          value: perSub,
+          unit: "raw",
+          previous: null,
+          changePct: null,
+          goodWhen: "neutral",
+          status: "healthy",
+          spark: dt.totals,
+          description: `Average ${label} per active subscriber on the latest day${tib ? ", converted to GB" : ""}.`,
+          formula: `latest ${frame.measureName} ÷ subscribers${tib ? " × 1024" : ""}`,
+        });
+      }
+
+      if (dt.days.length >= 3) {
+        const lr = linreg(dt.days, dt.totals);
+        const growth = avgDaily > 0 ? ((lr.slope * 7) / avgDaily) * 100 : 0;
+        add({
+          name: higherIsBad ? "Degradation Trend" : `${label} Growth`,
           category: "generic",
           value: growth,
           unit: "pct/wk",
@@ -511,76 +623,77 @@ export function discoverKpis(
           changePct: null,
           goodWhen: goodDir,
           status: higherIsBad ? (growth > 5 ? "critical" : growth > 0 ? "warning" : "healthy") : growth >= 0 ? "healthy" : "warning",
-          spark: daily.measureSum,
+          spark: dt.totals,
           description: `Week-over-week trend of ${label}.`,
           formula: "OLS slope × 7 ÷ mean",
         });
       }
+
       add({
-        name: `${label} (total)`,
+        name: isFlow ? `${label} (window total)` : `${label} (average)`,
         category: "generic",
-        value: total,
+        value: isFlow ? windowSum : avgDaily,
         unit: "raw",
         previous: null,
         changePct: null,
         goodWhen: goodDir,
         status: "healthy",
-        spark: daily ? daily.measureSum : [],
-        description: `Sum of ${label} across the dataset.`,
-        formula: `sum(${frame.measureName})`,
+        spark: dt.totals,
+        description: isFlow ? `Total ${label} across the whole window.` : `Average daily ${label}.`,
+        formula: isFlow ? `Σ daily ${frame.measureName}` : `mean(daily ${frame.measureName})`,
       });
-      add({
-        name: `${label} (avg per ${frame.entities.length > 1 ? "element" : "record"})`,
-        category: "generic",
-        value: mean(vals),
-        unit: "raw",
-        previous: null,
-        changePct: null,
-        goodWhen: "neutral",
-        status: "healthy",
-        spark: daily ? daily.measureSum : [],
-        description: `Mean ${label} per ${frame.entities.length > 1 ? "element" : "record"}.`,
-        formula: `mean(${frame.measureName})`,
-      });
-      if (higherIsBad && entityStats.length > 1) {
+    }
+
+    /* --- Segment mix: largest category --- */
+    if (entityStats.length > 1) {
+      const bySubs = frame.subscribers ? [...entityStats].filter((e) => (e.subscribers ?? 0) > 0).sort((a, b) => (b.subscribers ?? 0) - (a.subscribers ?? 0)) : [];
+      if (bySubs.length > 1) {
+        const totalS = bySubs.reduce((s, e) => s + (e.subscribers ?? 0), 0);
+        const top = bySubs[0];
+        add({
+          name: "Largest Segment",
+          category: "executive",
+          value: totalS > 0 ? ((top.subscribers ?? 0) / totalS) * 100 : 0,
+          unit: "%",
+          previous: null,
+          changePct: null,
+          goodWhen: "neutral",
+          status: "watch",
+          spark: [],
+          description: `${top.entity} holds the largest share of subscribers among the ${bySubs.length} segments.`,
+          formula: "top segment subscribers ÷ total",
+        });
+      } else if (higherIsBad) {
         const worst = entityStats[0];
         add({
           name: "Worst Element Share",
           category: "generic",
-          value: total > 0 ? (worst.avgUtil * (frame.n / Math.max(1, entityStats.length)) / total) * 100 : 0,
+          value: hasDailyMeasure ? Math.min(100, ((worst.avgUtil * (frame.n / Math.max(1, entityStats.length))) / Math.max(1, dt.totals.reduce((a, b) => a + b, 0))) * 100) : 0,
           unit: "%",
           previous: null,
           changePct: null,
           goodWhen: "low",
           status: "watch",
           spark: [],
-          description: `Share of total ${label} carried by the single worst element (${worst.entity}).`,
+          description: `Share of total ${label} from the single worst element (${worst.entity}).`,
           formula: "worst entity mean × records ÷ total",
         });
       }
-    }
-    if (frame.subscribers) {
-      const subsByEntity = new Map<string, number>();
-      for (let i = 0; i < frame.n; i++) {
-        const s = frame.subscribers[i];
-        const ent = frame.entity ? frame.entity[i] : String(i);
-        if (s !== null && s !== undefined && (subsByEntity.get(ent) ?? 0) < s) subsByEntity.set(ent, s);
-      }
-      const totalSubs = [...subsByEntity.values()].reduce((a, b) => a + b, 0);
       add({
-        name: "Subscribers Affected",
+        name: frame.subscribers ? "Segments Tracked" : "Tracked Entities",
         category: "generic",
-        value: totalSubs,
+        value: frame.entities.length,
         unit: "count",
         previous: null,
         changePct: null,
-        goodWhen: "low",
-        status: totalSubs > 20000 ? "warning" : "watch",
+        goodWhen: "neutral",
+        status: "healthy",
         spark: [],
-        description: "Total subscribers homed on the elements in this report.",
-        formula: "sum(max subscribers per element)",
+        description: "Distinct categories discovered in the breakdown dimension.",
+        formula: "distinct(entity column)",
       });
     }
+
     add({
       name: "Records Analyzed",
       category: "generic",
@@ -590,25 +703,10 @@ export function discoverKpis(
       changePct: null,
       goodWhen: "neutral",
       status: "healthy",
-      spark: daily ? daily.measureSum : [],
+      spark: hasDailyMeasure ? dt.totals : [],
       description: "Rows ingested into the analysis.",
       formula: "count(rows)",
     });
-    if (frame.entities.length > 1) {
-      add({
-        name: "Tracked Entities",
-        category: "generic",
-        value: frame.entities.length,
-        unit: "count",
-        previous: null,
-        changePct: null,
-        goodWhen: "neutral",
-        status: "healthy",
-        spark: [],
-        description: "Distinct entities discovered in the dataset.",
-        formula: "distinct(entity column)",
-      });
-    }
   }
 
   return kpis;

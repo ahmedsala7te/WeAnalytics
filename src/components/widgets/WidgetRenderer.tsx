@@ -129,7 +129,19 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
         return <EChart option={busyHourOption(dark, a.busyHourProfile)} height={H - 40} registerAs={spec.title} />;
       case "pareto": {
         const byCong = spec.dataKey === "congestion";
+        const bySubs = spec.dataKey === "subscribers";
         const n = spec.limit ?? 12;
+        if (bySubs) {
+          const top = [...a.entityStats].filter((e) => (e.subscribers ?? 0) > 0).sort((x, y) => (y.subscribers ?? 0) - (x.subscribers ?? 0)).slice(0, n);
+          if (top.length === 0) return <Empty msg="No subscriber data" />;
+          return (
+            <EChart
+              option={paretoOption(dark, top.map((e) => e.entity), top.map((e) => e.subscribers ?? 0), "subscribers")}
+              height={H - 40}
+              registerAs={spec.title}
+            />
+          );
+        }
         const top = byCong
           ? [...a.entityStats].sort((x, y) => y.congestedHours - x.congestedHours).filter((e) => e.congestedHours > 0).slice(0, n)
           : [...a.entityStats].sort((x, y) => y.avgUtil - x.avgUtil).slice(0, n);
@@ -179,7 +191,7 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
         return (
           <EntityTable
             entities={a.entityStats}
-            mode={(spec.dataKey as "risk" | "saturation" | "congestion") ?? "risk"}
+            mode={(spec.dataKey as "risk" | "saturation" | "congestion" | "breakdown") ?? "risk"}
             measureLabel={a.measureLabel}
             isPct={a.measureIsPct}
             higherIsBad={a.measureHigherIsBad}

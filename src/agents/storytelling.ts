@@ -1,4 +1,4 @@
-import { fmtDate, fmtNum, fmtPct, fmtSigned, uid } from "@/lib/format";
+import { fmtDate, fmtNum, fmtPct, fmtSigned, titleCase, uid } from "@/lib/format";
 import { healthLabel, THRESHOLDS } from "@/lib/constants";
 import { paretoCover } from "@/lib/stats";
 import type {
@@ -36,7 +36,8 @@ export function composeStory(
   rootCauses: RootCauseReport[],
   forecasts: ForecastResult[],
   healthScore: number,
-  utilMode: boolean
+  utilMode: boolean,
+  higherIsBad = false
 ): StoryOutput {
   const insights: Insight[] = [];
   const windowDays = frame.hasTime ? Math.max(1, Math.round((frame.timeEnd - frame.timeStart) / DAY_MS)) : 0;
@@ -167,45 +168,65 @@ export function composeStory(
     }
     recommendations.push("Re-run this analysis weekly and track the Network Health Score trend as the single executive KPI.");
   } else {
-    /* ----------------------------- generic story --------------------------- */
-    const primary = kpis[0];
-    headline = `Dataset analyzed: ${domains[0]?.domain ?? "Generic Business"} (${domains[0]?.confidence ?? 0}% confidence) — ${fmtNum(frame.n, 0)} records${
-      windowDays ? ` spanning ${windowDays} days` : ""
-    }.`;
-    const growth = kpis.find((k) => k.name === "Growth Rate" || k.name === "Degradation Trend");
-    const telecomish = ["Telecom", "Performance Management", "Capacity Planning", "Service Assurance", "Operations"].includes(domains[0]?.domain ?? "");
+    /* -------------------- breakdown / measure-mode story -------------------- */
     const measureName = frame.measureName.replace(/[_-]+/g, " ");
-    const worst = entityStats[0];
+    const telecomish = ["Telecom", "Performance Management", "Capacity Planning", "Service Assurance", "Operations"].includes(domains[0]?.domain ?? "");
+    const good = !higherIsBad; // volume / subscribers / revenue — bigger is healthier
+    const subsKpi = kpi("Total Subscribers");
+    const perSubKpi = kpis.find((k) => /per subscriber/i.test(k.name));
+    const growth = kpis.find((k) => /growth|degradation trend/i.test(k.name));
+    const headlineKpi = subsKpi ?? kpis[0];
+    // rank segments by subscribers (good) or by the measure
+    const segs = [...entityStats].sort((a, b) =>
+      subsKpi ? (b.subscribers ?? 0) - (a.subscribers ?? 0) : higherIsBad ? b.avgUtil - a.avgUtil : b.avgUtil - a.avgUtil
+    );
+    const lead = segs[0];
+
+    headline = headlineKpi
+      ? `${domains[0]?.domain ?? "Dataset"} · ${headlineKpi.name} ${fmtNum(headlineKpi.value, 0)}${headlineKpi.unit === "%" ? "%" : ""}${
+          growth ? ` — ${measureName} trending ${fmtSigned(growth.value, 1)}/week.` : "."
+        }`
+      : `${domains[0]?.domain ?? "Dataset"} analyzed — ${fmtNum(frame.n, 0)} records${windowDays ? ` over ${windowDays} days` : ""}.`;
+
     summary = [
-      `The platform profiled ${fmtNum(frame.n, 0)} records and identified ${frame.entities.length || "no"} distinct elements${
-        regionStats.length > 1 ? ` across ${regionStats.length} regions` : ""
-      }, ranked by ${measureName}.`,
-      primary ? `${primary.name} is ${fmtNum(primary.value)}${primary.changePct !== null ? ` (${fmtSigned(primary.changePct, 1)} vs prior window)` : ""}.` : "",
-      growth ? `The trend is ${fmtSigned(growth.value, 1)} per week.` : "",
-      worst && regionStats.length > 0
-        ? `The most affected element is ${worst.entity} (${worst.region}) with an average ${measureName} of ${fmtNum(worst.avgUtil)}.`
-        : "",
-      telecomish
-        ? `This report carries no utilization percentage, so congestion analytics were skipped — the analysis focuses on ${measureName} severity instead.`
-        : "This dataset is outside the telecom domain, so the network intelligence layer was skipped; generic analytics were generated instead.",
+      `Analysis of ${fmtNum(frame.n, 0)} records classifies this as ${domains[0]?.domain ?? "Generic Business"} (${domains[0]?.confidence ?? 0}% confidence), broken down across ${frame.entities.length} ${frame.entities.length === 1 ? "segment" : "segments"} by ${measureName}.`,
+      subsKpi ? `Active subscriber base is ${fmtNum(subsKpi.value, 0)}${subsKpi.changePct !== null ? ` (${fmtSigned(subsKpi.changePct, 1)} vs prior)` : ""}.` : "",
+      perSubKpi ? `${perSubKpi.name} is ${fmtNum(perSubKpi.value)}.` : "",
+      lead ? `${lead.entity} is the largest segment${lead.subscribers ? ` with ${fmtNum(lead.subscribers, 0)} subscribers` : ` by ${measureName}`}.` : "",
+      good
+        ? "This dataset has no utilization metric, so congestion/saturation analytics do not apply — the focus is subscriber base, traffic mix and growth."
+        : `This report carries no utilization percentage; the analysis ranks segments by ${measureName} severity instead.`,
     ]
       .filter(Boolean)
       .join(" ");
-    if (growth) keyInsights.push(`Trend: ${fmtSigned(growth.value, 1)}/week on ${measureName}.`);
-    if (regionStats.length > 1) {
-      const top = regionStats[0];
-      keyInsights.push(`Most affected region: ${top.region} (health ${top.healthScore.toFixed(0)}/100, ${top.entities} element${top.entities === 1 ? "" : "s"} in this report).`);
+
+    if (subsKpi) keyInsights.push(`Total subscribers: ${fmtNum(subsKpi.value, 0)}${growth ? ` · base ${fmtSigned((kpi("Subscriber Growth")?.value ?? 0), 1)}/wk` : ""}.`);
+    if (growth) keyInsights.push(`${titleCase(measureName)} is trending ${fmtSigned(growth.value, 1)} per week.`);
+    if (perSubKpi) keyInsights.push(`${perSubKpi.name}: ${fmtNum(perSubKpi.value)} — ${perSubKpi.description}`);
+    if (lead && segs.length > 1) {
+      const share = subsKpi && segs.reduce((s, e) => s + (e.subscribers ?? 0), 0) > 0
+        ? ((lead.subscribers ?? 0) / segs.reduce((s, e) => s + (e.subscribers ?? 0), 0)) * 100
+        : null;
+      keyInsights.push(`Largest segment: ${lead.entity}${share !== null ? ` (${fmtPct(share, 0)} of subscribers)` : ` by ${measureName}`}.`);
     }
-    if (worst) keyInsights.push(`Worst element: ${worst.entity} — avg ${measureName} ${fmtNum(worst.avgUtil)}${worst.subscribers ? `, ${fmtNum(worst.subscribers, 0)} subscribers` : ""}.`);
-    for (const a of anomalies.slice(0, 3)) keyInsights.push(a.text + ".");
-    if (telecomish) {
-      risks.push(`Elements at the top of the ${measureName} ranking represent sustained service degradation and churn exposure.`);
-      recommendations.push(`Prioritize remediation of the top ${Math.min(5, entityStats.length)} elements by ${measureName}; track week-over-week movement after each fix.`);
-      recommendations.push("Include a utilization/capacity column in future exports to unlock congestion and saturation analytics.");
+    for (const a of anomalies.slice(0, 2)) keyInsights.push(a.text + ".");
+
+    if (good) {
+      if (growth && growth.value > 1) risks.push(`${titleCase(measureName)} is growing ${fmtSigned(growth.value, 1)}/week — plan capacity ahead of demand.`);
+      if (lead && segs.length > 1) {
+        const share = subsKpi ? ((lead.subscribers ?? 0) / Math.max(1, segs.reduce((s, e) => s + (e.subscribers ?? 0), 0))) * 100 : 0;
+        if (share > 70) risks.push(`Heavy concentration: ${lead.entity} holds ${fmtPct(share, 0)} of the base — limited diversification.`);
+      }
+      if (risks.length === 0) risks.push("No structural risks evident in this window — healthy growth profile.");
+      recommendations.push(`Track ${measureName} and the subscriber base weekly; size capacity to the ${growth ? fmtSigned(growth.value, 1) + "/wk" : "current"} growth trend.`);
+      if (perSubKpi) recommendations.push(`Monitor ${perSubKpi.name.toLowerCase()} for plan up-sell and tariff opportunities.`);
+      recommendations.push("Upload utilization/capacity data alongside this to unlock congestion and saturation forecasting.");
     } else {
-      risks.push("Generic mode: telecom-specific risk detection (congestion, saturation, SLA) does not apply to this dataset.");
-      recommendations.push("Upload network performance data (utilization, traffic, alarms) to unlock the full telecom intelligence layer.");
+      risks.push(`Segments at the top of the ${measureName} ranking represent the worst service exposure.`);
+      recommendations.push(`Prioritize remediation of the top ${Math.min(5, entityStats.length)} segments by ${measureName}; track week-over-week movement.`);
+      recommendations.push("Add a utilization/capacity column to future exports to unlock congestion analytics.");
     }
+    void telecomish;
   }
 
   /* ----------------------------- insight feed ----------------------------- */
