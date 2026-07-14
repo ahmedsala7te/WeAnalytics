@@ -12,7 +12,8 @@ import type { AnalysisResult, DashboardAction, PersonaId, WidgetSpec, WidgetType
 const ALLOWED_TYPES: WidgetType[] = [
   "kpi-grid", "gauge", "tilemap", "trend", "area-trend", "heatmap", "busy-hour",
   "pareto", "treemap", "sankey", "scatter", "forecast", "histogram",
-  "table-entities", "table-regions", "anomalies", "insights", "entity-bars",
+  "table-entities", "table-regions", "anomalies", "insights", "dashboard-reasoning",
+  "business-comparison-bars", "business-delta-table", "business-status-breakdown", "entity-bars",
 ];
 
 const SYSTEM = `You translate a user's request about their telecom analytics dashboard into a STRICT JSON array of actions. No prose, no markdown — only the JSON array. If the request is not about changing the dashboard, or is too vague to act on confidently, return [].
@@ -32,6 +33,9 @@ Allowed actions:
 {"kind":"reset-dashboard"}
 
 Widget types: ${ALLOWED_TYPES.join(", ")}. dataKey options — pareto: "congestion"|"measure"; table-entities: "risk"|"saturation"|"congestion"; trend: "regions"|"overall"; forecast: "0".
+"business-comparison-bars" = telecom playbook comparison chart across short daily periods.
+"business-delta-table" = telecom latest vs previous offender table.
+"business-status-breakdown" = telecom status/category breakdown for upgrade or exception reports.
 "entity-bars" = per-element comparison chart: one group of bars per element (MSAN/site/link), one bar per day — use it for requests like "bars per MSAN", "compare elements across days".
 KPI cards (inside the KPI grid) are NOT widgets — to hide/show a single KPI card use remove-kpi/add-kpi with a name from the KPI catalog.
 Use ONLY region names, personas, widget titles and KPI names from the catalog the user provides. Region names must be copied EXACTLY (they may be Arabic).`;

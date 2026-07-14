@@ -1,5 +1,5 @@
 import { isAggregateLabel, measureKind, toEpoch, toNum } from "./profiling";
-import type { Dataset, SemanticMapping } from "@/lib/types";
+import type { Dataset, SemanticMapping, TelecomBusinessContext } from "@/lib/types";
 
 /* ------------------------------------------------------------------------
  * Columnar frame extracted once per analysis run; all downstream agents
@@ -24,6 +24,8 @@ export interface Frame {
   packetLoss: (number | null)[] | null;
   measure: (number | null)[] | null;
   measureName: string;
+  warningMeasure: (number | null)[] | null;
+  warningMeasureName?: string;
   /** stock (point-in-time level) vs flow (accumulates over a period) */
   measureKind: "stock" | "flow";
   hasTime: boolean;
@@ -37,7 +39,7 @@ export interface Frame {
   hasAggregateRows: boolean;
 }
 
-export function extractFrame(dataset: Dataset, mapping: SemanticMapping): Frame {
+export function extractFrame(dataset: Dataset, mapping: SemanticMapping, businessContext?: TelecomBusinessContext): Frame {
   const rows = dataset.rows;
   const n = rows.length;
 
@@ -75,7 +77,9 @@ export function extractFrame(dataset: Dataset, mapping: SemanticMapping): Frame 
   const hasTime = Number.isFinite(timeStart) && timeEnd > timeStart;
 
   const util = numCol(mapping.utilization);
-  const measureCol = mapping.primaryMeasure === mapping.utilization ? util : numCol(mapping.primaryMeasure);
+  const selectedMeasure = businessContext?.comparisonMeasure ?? mapping.primaryMeasure;
+  const measureCol = selectedMeasure === mapping.utilization ? util : numCol(selectedMeasure);
+  const warningMeasureName = businessContext?.warningMeasure;
 
   const entity = strCol(mapping.entity);
   const region = strCol(mapping.region);
@@ -116,11 +120,13 @@ export function extractFrame(dataset: Dataset, mapping: SemanticMapping): Frame 
     latency: numCol(mapping.latency),
     packetLoss: numCol(mapping.packetLoss),
     measure: measureCol,
-    measureName: mapping.primaryMeasure ?? "Value",
-    measureKind: mapping.primaryMeasure
-      ? mapping.primaryMeasure === mapping.utilization
+    measureName: selectedMeasure ?? "Value",
+    warningMeasure: warningMeasureName ? numCol(warningMeasureName) : null,
+    warningMeasureName,
+    measureKind: selectedMeasure
+      ? selectedMeasure === mapping.utilization
         ? "stock"
-        : measureKind(mapping.primaryMeasure)
+        : measureKind(selectedMeasure)
       : "flow",
     hasTime,
     timeStart: hasTime ? timeStart : 0,

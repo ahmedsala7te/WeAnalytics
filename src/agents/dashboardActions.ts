@@ -21,6 +21,26 @@ interface WidgetIntent {
 
 const WIDGET_INTENTS: WidgetIntent[] = [
   {
+    type: "business-comparison-bars",
+    match: /business comparison|critical time comparison|warning time comparison|daily comparison|compare.*(critical|warning|days)/,
+    title: () => "Critical Time Comparison",
+    span: 4,
+    tall: true,
+  },
+  {
+    type: "business-delta-table",
+    match: /delta table|latest.*previous|previous.*latest|worsening|offender.*delta|worst.*delta/,
+    title: () => "Worst Daily Delta",
+    span: 4,
+    tall: true,
+  },
+  {
+    type: "business-status-breakdown",
+    match: /status breakdown|upgrade status|state breakdown|rollout status/,
+    title: () => "Status Breakdown",
+    span: 2,
+  },
+  {
     // "bars for every msan", "per element comparison", "trend by msan"
     type: "entity-bars",
     match: /(per|by|every|each|لكل)[\s-]*(msan|element|site|link|node|cell|entity|كبينة|عنصر)|element comparison|msan comparison/,
@@ -39,6 +59,7 @@ const WIDGET_INTENTS: WidgetIntent[] = [
   { type: "gauge", match: /gauge|health score widget/, title: () => "Network Health", span: 1 },
   { type: "tilemap", match: /tile\s?map|region(al)? map|health map/, title: () => "Regional Health Map", span: 4 },
   { type: "insights", match: /insight|recommendation panel|summary panel/, title: () => "AI Insights", span: 2, tall: true },
+  { type: "dashboard-reasoning", match: /why.*dashboard|dashboard reasoning|explain.*dashboard/, title: () => "Why This Dashboard", span: 4 },
   { type: "kpi-grid", match: /kpi/, title: () => "Key Performance Indicators", span: 4, dataKey: () => "generic" },
   { type: "area-trend", match: /alarm (trend|chart|volume)/, title: () => "Alarm Volume Trend", span: 2, dataKey: () => "alarms" },
   {

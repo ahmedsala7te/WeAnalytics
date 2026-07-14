@@ -91,6 +91,44 @@ export interface SemanticMapping {
   measureHigherIsBad?: boolean;
 }
 
+export type MappingOverrideField =
+  | "timestamp"
+  | "entity"
+  | "region"
+  | "technology"
+  | "utilization"
+  | "traffic"
+  | "capacity"
+  | "subscribers"
+  | "alarms"
+  | "criticalAlarms"
+  | "primaryMeasure";
+
+export interface DataUnderstandingWarning {
+  severity: "info" | "warning" | "critical";
+  message: string;
+}
+
+export interface DataUnderstandingReport {
+  dataset: Dataset;
+  profile: ColumnProfile[];
+  domains: DomainScore[];
+  mapping: SemanticMapping;
+  businessContext: TelecomBusinessContext;
+  warnings: DataUnderstandingWarning[];
+  transformed: boolean;
+  transformNote?: string;
+  quality: {
+    rows: number;
+    columns: number;
+    numericColumns: number;
+    datetimeColumns: number;
+    categoricalColumns: number;
+    identifierColumns: number;
+    averageNullPct: number;
+  };
+}
+
 /* -------------------- LLM data-understanding assist ---------------------- */
 
 export interface UnpivotGroup {
@@ -128,6 +166,8 @@ export interface Kpi {
   id: string;
   name: string;
   category: "performance" | "capacity" | "assurance" | "executive" | "generic";
+  businessCaseIds?: TelecomBusinessCaseId[];
+  businessPriority?: number;
   value: number;
   unit: "%" | "count" | "Mbps" | "Gbps" | "days" | "score" | "ms" | "raw" | "pct/wk";
   previous?: number | null;
@@ -266,6 +306,40 @@ export interface ExecutiveStory {
 
 export type PersonaId = "executive" | "noc" | "capacity" | "performance" | "assurance" | "overview";
 
+export type TelecomBusinessCaseId =
+  | "critical_time_comparison"
+  | "congestion_risk"
+  | "capacity_upgrade"
+  | "subscriber_impact"
+  | "alarm_assurance"
+  | "availability_degradation"
+  | "region_performance"
+  | "upgrade_followup"
+  | "top_offenders"
+  | "daily_exception";
+
+export interface TelecomBusinessCaseCandidate {
+  id: TelecomBusinessCaseId;
+  label: string;
+  score: number;
+  reasons: string[];
+}
+
+export interface TelecomBusinessContext {
+  selectedCaseId: TelecomBusinessCaseId;
+  selectedLabel: string;
+  candidates: TelecomBusinessCaseCandidate[];
+  entityColumn?: string;
+  regionColumn?: string;
+  sectorColumn?: string;
+  statusColumn?: string;
+  subscriberColumn?: string;
+  primaryMeasure?: string;
+  comparisonMeasure?: string;
+  warningMeasure?: string;
+  hasTimeComparison: boolean;
+}
+
 export type WidgetType =
   | "kpi-grid"
   | "gauge"
@@ -284,6 +358,10 @@ export type WidgetType =
   | "table-regions"
   | "anomalies"
   | "insights"
+  | "dashboard-reasoning"
+  | "business-comparison-bars"
+  | "business-delta-table"
+  | "business-status-breakdown"
   | "correlation"
   | "entity-bars";
 
@@ -295,6 +373,8 @@ export interface WidgetSpec {
   span: 1 | 2 | 3 | 4;
   tall?: boolean;
   dataKey?: string;
+  /** stable playbook handle used by LLM refinement patches */
+  playbookKey?: string;
   /** top-N override for pareto / entity tables / entity-bars */
   limit?: number;
   /** kpi-grid: KPI names hidden from this grid (chat-edited) */
@@ -310,6 +390,31 @@ export interface DashboardSpec {
   widgets: WidgetSpec[];
 }
 
+export interface DashboardReason {
+  persona: PersonaId | "all";
+  widgetTitle: string;
+  reason: string;
+  sourceColumns: string[];
+}
+
+export interface DashboardPlanWarning {
+  severity: "info" | "warning" | "critical";
+  message: string;
+}
+
+export interface LlmDashboardPlan {
+  prompt: string;
+  engine: string;
+  businessCaseId?: TelecomBusinessCaseId;
+  persona: PersonaId;
+  title: string;
+  description: string;
+  widgets: WidgetSpec[];
+  reasoning: DashboardReason[];
+  warnings: DashboardPlanWarning[];
+  rawIntent?: string;
+}
+
 /* ----------------------------- Analysis root ---------------------------- */
 
 export interface HeatmapData {
@@ -321,6 +426,13 @@ export interface HeatmapData {
 export interface SankeyData {
   nodes: { name: string }[];
   links: { source: string; target: string; value: number }[];
+}
+
+export interface BusinessStatusItem {
+  label: string;
+  count: number;
+  sharePct: number;
+  subscribersImpacted: number;
 }
 
 export interface AnalysisResult {
@@ -353,6 +465,13 @@ export interface AnalysisResult {
   insights: Insight[];
   story: ExecutiveStory;
   dashboards: DashboardSpec[];
+  dashboardReasoning: DashboardReason[];
+  dashboardPlan?: LlmDashboardPlan;
+  dashboardPlanPrompt?: string;
+  dashboardPlanEngine?: string;
+  dashboardPlanWarnings?: DashboardPlanWarning[];
+  businessContext?: TelecomBusinessContext;
+  businessStatusBreakdown: BusinessStatusItem[];
   distribution: { bins: string[]; counts: number[]; metric: string } | null;
   sankey: SankeyData | null;
   /** Health score 0..100 */

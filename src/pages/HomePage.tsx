@@ -21,9 +21,13 @@ import {
 } from "lucide-react";
 import { SAMPLES } from "@/data/sampleGenerator";
 import { ingestFile } from "@/agents/ingestion";
+import { buildDataUnderstanding, selectBusinessCase } from "@/agents/dataUnderstanding";
+import { buildTelecomPlaybookPlan } from "@/agents/telecomBusinessCases";
+import { planDashboardWithOllama } from "@/llm/dashboardPlanner";
 import { useAppStore } from "@/store/useAppStore";
+import { DataUnderstandingReview } from "@/components/DataUnderstandingReview";
 import { fmtBytes, fmtNum, fmtTimeAgo } from "@/lib/format";
-import type { Dataset } from "@/lib/types";
+import type { DashboardPlanWarning, DataUnderstandingReport, LlmDashboardPlan, TelecomBusinessCaseId } from "@/lib/types";
 
 const FORMATS = [
   { icon: FileSpreadsheet, label: "Excel (.xlsx)" },
@@ -44,19 +48,22 @@ const JOURNEY = [
 
 export function HomePage() {
   const ingestAndAnalyze = useAppStore((s) => s.ingestAndAnalyze);
-  const ingestAndAnalyzeMany = useAppStore((s) => s.ingestAndAnalyzeMany);
   const datasets = useAppStore((s) => s.datasets);
   const analyses = useAppStore((s) => s.analyses);
   const activeId = useAppStore((s) => s.activeDatasetId);
   const selectDataset = useAppStore((s) => s.selectDataset);
   const removeDataset = useAppStore((s) => s.removeDataset);
   const user = useAppStore((s) => s.user);
+  const llm = useAppStore((s) => s.llm);
   const navigate = useNavigate();
 
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [loadingSample, setLoadingSample] = useState<string | null>(null);
+  const [pendingReviews, setPendingReviews] = useState<DataUnderstandingReport[]>([]);
+  const [reviewPlanning, setReviewPlanning] = useState(false);
+  const [reviewAnalyzing, setReviewAnalyzing] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(
@@ -65,21 +72,21 @@ export function HomePage() {
       if (list.length === 0) return;
       setError(null);
       setParsing(true);
-      const datasets: Dataset[] = [];
+      const reviews: DataUnderstandingReport[] = [];
       const errors: string[] = [];
       for (const file of list) {
         try {
-          datasets.push(await ingestFile(file));
+          const dataset = await ingestFile(file);
+          reviews.push(buildDataUnderstanding(dataset));
         } catch (e) {
           errors.push(`${file.name}: ${e instanceof Error ? e.message : "parse failed"}`);
         }
       }
       setParsing(false);
       if (errors.length) setError(`Couldn't read ${errors.length} file(s): ${errors.join(" · ")}`);
-      if (datasets.length === 1) await ingestAndAnalyze(datasets[0]);
-      else if (datasets.length > 1) await ingestAndAnalyzeMany(datasets);
+      if (reviews.length > 0) setPendingReviews((cur) => [...cur, ...reviews]);
     },
-    [ingestAndAnalyze, ingestAndAnalyzeMany]
+    []
   );
 
   const loadSample = useCallback(
@@ -92,18 +99,70 @@ export function HomePage() {
       await new Promise((r) => setTimeout(r, 60));
       try {
         const dataset = def.build();
+        const review = buildDataUnderstanding(dataset);
         setLoadingSample(null);
-        await ingestAndAnalyze(dataset);
+        setPendingReviews((cur) => [...cur, review]);
       } catch (e) {
         setLoadingSample(null);
         setError(e instanceof Error ? e.message : "Failed to generate sample.");
       }
     },
-    [ingestAndAnalyze]
+    []
   );
+
+  const confirmReview = useCallback(
+    async (review: DataUnderstandingReport, prompt: string, useLlmPlanner: boolean, selectedCaseId: TelecomBusinessCaseId) => {
+      setError(null);
+      setReviewPlanning(true);
+      const selectedReview = selectBusinessCase(review, selectedCaseId);
+      let dashboardPlan: LlmDashboardPlan | undefined = buildTelecomPlaybookPlan(selectedReview, selectedCaseId, prompt);
+      const dashboardPlanWarnings: DashboardPlanWarning[] = [];
+      try {
+        if (useLlmPlanner && llm.status === "connected" && llm.model) {
+          dashboardPlan = await planDashboardWithOllama(selectedReview, prompt, { baseUrl: llm.baseUrl, model: llm.model });
+        } else if (useLlmPlanner) {
+          dashboardPlanWarnings.push({
+            severity: "warning",
+            message: "Local Ollama was not connected, so NetPulse used the selected telecom business playbook instead.",
+          });
+        }
+      } catch (e) {
+        dashboardPlanWarnings.push({
+          severity: "warning",
+          message: e instanceof Error ? `Local LLM planner failed: ${e.message}. The selected telecom business playbook was used.` : "Local LLM planner failed. The selected telecom business playbook was used.",
+        });
+      } finally {
+        setReviewPlanning(false);
+      }
+      setReviewAnalyzing(true);
+      setPendingReviews((cur) => cur.slice(1));
+      try {
+        await ingestAndAnalyze(selectedReview.dataset, selectedReview, { dashboardPlan, dashboardPlanWarnings });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Analysis failed after data understanding review.");
+      } finally {
+        setReviewAnalyzing(false);
+      }
+    },
+    [ingestAndAnalyze, llm]
+  );
+
+  const cancelReview = useCallback(() => {
+    setPendingReviews((cur) => cur.slice(1));
+  }, []);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
+      {!reviewAnalyzing && pendingReviews[0] && (
+        <DataUnderstandingReview
+          report={pendingReviews[0]}
+          llm={llm}
+          queueCount={pendingReviews.length}
+          planning={reviewPlanning}
+          onConfirm={(prompt, useLlmPlanner, selectedCaseId) => void confirmReview(pendingReviews[0], prompt, useLlmPlanner, selectedCaseId)}
+          onCancel={cancelReview}
+        />
+      )}
       {/* ------------------------------- header ------------------------------- */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
         <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-accent-400">
@@ -161,7 +220,7 @@ export function HomePage() {
             {parsing ? <Loader2 size={26} className="animate-spin" /> : <UploadCloud size={26} />}
           </div>
           <h3 className="mt-4 text-[16px] font-bold text-primary">
-            {parsing ? "Parsing file…" : dragOver ? "Release to analyze" : "Drag & drop your dataset here"}
+            {parsing ? "Parsing and profiling file…" : dragOver ? "Release to analyze" : "Drag & drop your dataset here"}
           </h3>
           <p className="mt-1 text-[12.5px] text-muted">or click to browse · select multiple files at once · up to 250K rows each, in-browser</p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">

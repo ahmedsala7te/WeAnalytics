@@ -1,6 +1,6 @@
 import { sleep, titleCase } from "@/lib/format";
-import type { AgentProgressEvent, AnalysisResult, ColumnProfile, Dataset, FilterState } from "@/lib/types";
-import { profileDataset, toEpoch } from "./profiling";
+import type { AgentProgressEvent, AnalysisResult, ColumnProfile, DashboardPlanWarning, DataUnderstandingReport, Dataset, FilterState, LlmDashboardPlan, SemanticMapping, TelecomBusinessContext } from "@/lib/types";
+import { profileDataset, toEpoch, toNum } from "./profiling";
 import { detectDomains, isTelecomDomain } from "./domainDetection";
 import type { AssistOutcome } from "@/llm/mappingAssist";
 import { needsAssist } from "@/llm/mappingAssist";
@@ -26,6 +26,16 @@ export interface PipelineOptions {
   assist?: (dataset: Dataset, profile: ColumnProfile[]) => Promise<AssistOutcome | null>;
   /** called when the assist replaced the dataset (store should keep the new one) */
   onDatasetTransformed?: (ds: Dataset) => void;
+  /** user-reviewed profile/mapping from the Data Understanding step */
+  understanding?: DataUnderstandingReport;
+  /** reuse a confirmed mapping when the same dataset is re-run through filters */
+  confirmedMapping?: SemanticMapping;
+  /** validated local-LLM dashboard plan */
+  dashboardPlan?: LlmDashboardPlan;
+  /** visible warnings when dashboard planning fell back */
+  dashboardPlanWarnings?: DashboardPlanWarning[];
+  /** selected telecom business case, preserved for filtered refreshes */
+  businessContext?: TelecomBusinessContext;
 }
 
 export function applyFilters(dataset: Dataset, filters: FilterState, mapping: { timestamp?: string; region?: string; technology?: string; entity?: string }): Dataset {
@@ -73,7 +83,10 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
 
   emit("profiling", "running", "Inferring column roles and semantics");
   await pace(80);
-  let { dataset: ds, profile, mapping } = profileDataset(dataset);
+  let { dataset: ds, profile, mapping } = opts.understanding
+    ? { dataset: opts.understanding.dataset, profile: opts.understanding.profile, mapping: opts.understanding.mapping }
+    : profileDataset(dataset);
+  if (opts.confirmedMapping) mapping = opts.confirmedMapping;
   emit(
     "profiling",
     "done",
@@ -83,10 +96,10 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
 
   emit("domain", "running", "Matching domain signatures");
   let domains = detectDomains(profile, mapping);
-  let transformNote: string | undefined;
+  let transformNote = opts.understanding?.transformNote;
 
   // LLM data-understanding: triggered only when the heuristics are uncertain
-  if (opts.assist && needsAssist(mapping, domains)) {
+  if (!opts.understanding && opts.assist && needsAssist(mapping, domains)) {
     emit("domain", "running", "Local LLM analyzing the data structure…");
     try {
       const outcome = await opts.assist(ds, profile);
@@ -103,10 +116,11 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     }
   }
   const isTelecom = isTelecomDomain(domains);
+  const businessContext = opts.understanding?.businessContext ?? opts.businessContext;
   emit("domain", "done", transformNote ? `${domains[0].domain} ${domains[0].confidence}% · LLM-assisted` : `${domains[0].domain} ${domains[0].confidence}%`);
   await pace(500);
 
-  const frame = extractFrame(ds, mapping);
+  const frame = extractFrame(ds, mapping, businessContext);
   const measureIsPct = isTelecom && !!mapping.utilization;
   const measureLabel = measureIsPct ? "Utilization" : titleCase(mapping.primaryMeasure ?? "Value");
 
@@ -130,7 +144,8 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     intel.congestionEvents,
     intel.healthScore,
     isTelecom,
-    !!mapping.measureHigherIsBad
+    !!mapping.measureHigherIsBad,
+    businessContext
   );
   emit("kpi", "done", `${kpis.length} KPIs discovered`);
   await pace(460);
@@ -172,11 +187,13 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
   await pace(420);
 
   emit("design", "running", "Composing persona dashboards");
-  const dashboards = designDashboards({
+  const designed = designDashboards({
     isTelecom,
     measureIsPct,
     measureLabel,
     measureHigherIsBad: !!mapping.measureHigherIsBad && !measureIsPct,
+    mapping,
+    profile,
     kpis,
     heatmap: intel.heatmap,
     dailyTrend: intel.dailyTrend,
@@ -190,7 +207,9 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     correlations: stats.correlations,
     congestionEvents: intel.congestionEvents,
     topEntityDaily: intel.topEntityDaily,
+    dashboardPlan: opts.dashboardPlan,
   });
+  const { dashboards, reasoning: dashboardReasoning } = designed;
   emit("design", "done", `${dashboards.length} dashboards · ${dashboards.reduce((s, d) => s + d.widgets.length, 0)} widgets`);
   await pace(440);
 
@@ -198,7 +217,6 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
   await pace(260);
   emit("chat", "done", "Assistant indexed the results");
   await pace(200);
-
   return {
     datasetId: ds.id,
     datasetName: ds.name,
@@ -231,6 +249,13 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     insights,
     story,
     dashboards,
+    dashboardReasoning,
+    dashboardPlan: opts.dashboardPlan,
+    dashboardPlanPrompt: opts.dashboardPlan?.prompt,
+    dashboardPlanEngine: opts.dashboardPlan?.engine,
+    dashboardPlanWarnings: [...(opts.dashboardPlan?.warnings ?? []), ...(opts.dashboardPlanWarnings ?? [])],
+    businessContext,
+    businessStatusBreakdown: buildBusinessStatusBreakdown(ds, businessContext, mapping),
     distribution: intel.distribution,
     sankey: intel.sankey,
     healthScore: intel.healthScore,
@@ -240,4 +265,31 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     transformNote,
     topEntityDaily: intel.topEntityDaily,
   };
+}
+
+function buildBusinessStatusBreakdown(
+  dataset: Dataset,
+  businessContext: TelecomBusinessContext | undefined,
+  mapping: SemanticMapping
+): AnalysisResult["businessStatusBreakdown"] {
+  const col = businessContext?.statusColumn;
+  if (!col || !dataset.columns.includes(col)) return [];
+  const byStatus = new Map<string, { count: number; subscribers: number }>();
+  for (const row of dataset.rows) {
+    const label = String(row[col] ?? "Unknown").trim() || "Unknown";
+    const cur = byStatus.get(label) ?? { count: 0, subscribers: 0 };
+    cur.count++;
+    if (mapping.subscribers) cur.subscribers += toNum(row[mapping.subscribers]) ?? 0;
+    byStatus.set(label, cur);
+  }
+  const total = Math.max(1, dataset.rows.length);
+  return [...byStatus.entries()]
+    .map(([label, v]) => ({
+      label,
+      count: v.count,
+      sharePct: (v.count / total) * 100,
+      subscribersImpacted: v.subscribers,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 12);
 }

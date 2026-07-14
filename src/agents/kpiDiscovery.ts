@@ -1,7 +1,7 @@
 import { THRESHOLDS } from "@/lib/constants";
 import { titleCase } from "@/lib/format";
 import { clamp, linreg, mean, percentile } from "@/lib/stats";
-import type { CongestionEvent, EntityStat, Kpi, KpiStatus, RegionStat } from "@/lib/types";
+import type { CongestionEvent, EntityStat, Kpi, KpiStatus, RegionStat, TelecomBusinessContext } from "@/lib/types";
 import { DAY_MS, type Frame } from "./frame";
 
 /* ------------------------------------------------------------------------
@@ -173,6 +173,199 @@ function statusOf(value: number, bands: [number, number, number], goodWhen: "low
   return "critical";
 }
 
+type AddKpi = (k: Omit<Kpi, "id">) => void;
+
+function changeStatus(changePct: number | null, higherIsBad: boolean): KpiStatus {
+  if (changePct === null || Math.abs(changePct) < 2) return "healthy";
+  if (higherIsBad) {
+    if (changePct >= 25) return "critical";
+    if (changePct > 0) return "warning";
+    return "healthy";
+  }
+  if (changePct <= -25) return "critical";
+  if (changePct < 0) return "warning";
+  return "healthy";
+}
+
+function entityDailyDeltas(frame: Frame, higherIsBad: boolean): {
+  rows: { entity: string; latest: number; previous: number; delta: number; deltaPct: number | null; subscribers: number }[];
+  worsening: { entity: string; latest: number; previous: number; delta: number; deltaPct: number | null; subscribers: number }[];
+} {
+  if (!frame.measure || !frame.hasTime || !frame.entity) return { rows: [], worsening: [] };
+  const byEntity = new Map<string, Map<number, number>>();
+  for (let i = 0; i < frame.n; i++) {
+    const t = frame.t[i];
+    const v = frame.measure[i];
+    if (t === null || v === null || v === undefined) continue;
+    if (frame.aggregateMask && frame.aggregateMask[i]) continue;
+    const day = Math.floor((t - frame.timeStart) / DAY_MS);
+    const entity = frame.entity[i];
+    let byDay = byEntity.get(entity);
+    if (!byDay) {
+      byDay = new Map();
+      byEntity.set(entity, byDay);
+    }
+    byDay.set(day, (byDay.get(day) ?? 0) + v);
+  }
+  const rows = [...byEntity.entries()]
+    .map(([entity, byDay]) => {
+      const days = [...byDay.keys()].sort((a, b) => a - b);
+      const latest = byDay.get(days[days.length - 1]) ?? 0;
+      const previous = byDay.get(days[days.length - 2]) ?? 0;
+      const subs = frame.subscribers && frame.entity
+        ? maxSubscriberForEntity(frame, entity)
+        : 0;
+      return { entity, latest, previous, delta: latest - previous, deltaPct: change(latest, previous), subscribers: subs };
+    })
+    .sort((a, b) => (higherIsBad ? b.delta - a.delta || b.latest - a.latest : a.delta - b.delta || b.latest - a.latest));
+  const worsening = rows.filter((r) => (higherIsBad ? r.delta > 0 : r.delta < 0));
+  return { rows, worsening };
+}
+
+function maxSubscriberForEntity(frame: Frame, entity: string): number {
+  if (!frame.subscribers || !frame.entity) return 0;
+  let max = 0;
+  for (let i = 0; i < frame.n; i++) {
+    if (frame.entity[i] !== entity) continue;
+    const v = frame.subscribers[i];
+    if (v !== null && v !== undefined && v > max) max = v;
+  }
+  return max;
+}
+
+function addCriticalTimeKpis(add: AddKpi, frame: Frame, higherIsBad: boolean, businessContext: TelecomBusinessContext): void {
+  const businessCaseIds = [businessContext.selectedCaseId];
+  if (!frame.measure) return;
+  const label = titleCase(frame.measureName);
+  const dt = dailyTotals(frame, frame.measure);
+  if (dt.totals.length === 0) return;
+  const latest = dt.totals[dt.totals.length - 1];
+  const previous = dt.totals.length >= 2 ? dt.totals[dt.totals.length - 2] : null;
+  const latestChange = change(latest, previous);
+  add({
+    name: "Latest Critical Time",
+    category: "assurance",
+    businessCaseIds,
+    businessPriority: 10,
+    value: latest,
+    unit: "raw",
+    previous,
+    changePct: latestChange,
+    goodWhen: "low",
+    status: changeStatus(latestChange, true),
+    spark: dt.totals,
+    description: `Latest-day total for ${label}, the main operational measure for this report.`,
+    formula: `Σ ${frame.measureName} on latest day`,
+  });
+
+  if (frame.warningMeasure && frame.warningMeasureName && frame.warningMeasureName !== frame.measureName) {
+    const wt = dailyTotals(frame, frame.warningMeasure);
+    if (wt.totals.length > 0) {
+      const warningLatest = wt.totals[wt.totals.length - 1];
+      const warningPrev = wt.totals.length >= 2 ? wt.totals[wt.totals.length - 2] : null;
+      const warningChange = change(warningLatest, warningPrev);
+      add({
+        name: "Latest Warning Time",
+        category: "assurance",
+        businessCaseIds,
+        businessPriority: 9,
+        value: warningLatest,
+        unit: "raw",
+        previous: warningPrev,
+        changePct: warningChange,
+        goodWhen: "low",
+        status: changeStatus(warningChange, true),
+        spark: wt.totals,
+        description: `Latest-day total for ${titleCase(frame.warningMeasureName)}.`,
+        formula: `Σ ${frame.warningMeasureName} on latest day`,
+      });
+    }
+  }
+
+  const deltas = entityDailyDeltas(frame, higherIsBad);
+  add({
+    name: "Worsening MSANs",
+    category: "assurance",
+    businessCaseIds,
+    businessPriority: 8,
+    value: deltas.worsening.length,
+    unit: "count",
+    previous: null,
+    changePct: null,
+    goodWhen: "low",
+    status: deltas.worsening.length > 10 ? "critical" : deltas.worsening.length > 0 ? "warning" : "healthy",
+    spark: [],
+    description: "Number of elements whose latest critical-time value increased versus the previous day.",
+    formula: "count(entity where latest critical time > previous day)",
+  });
+  const worst = [...deltas.rows].sort((a, b) => b.latest - a.latest)[0];
+  if (worst) {
+    add({
+      name: "Worst MSAN Latest",
+      category: "assurance",
+      businessCaseIds,
+      businessPriority: 7,
+      value: worst.latest,
+      unit: "raw",
+      previous: worst.previous,
+      changePct: worst.deltaPct,
+      goodWhen: "low",
+      status: changeStatus(worst.deltaPct, true),
+      spark: [],
+      description: `${worst.entity} has the highest latest-day critical-time value.`,
+      formula: "max latest-day critical time by entity",
+    });
+  }
+  const impacted = deltas.worsening.reduce((s, r) => s + r.subscribers, 0);
+  if (impacted > 0) {
+    add({
+      name: "Subscribers on Worsening MSANs",
+      category: "assurance",
+      businessCaseIds,
+      businessPriority: 6,
+      value: impacted,
+      unit: "count",
+      previous: null,
+      changePct: null,
+      goodWhen: "low",
+      status: impacted > 50_000 ? "critical" : impacted > 0 ? "warning" : "healthy",
+      spark: [],
+      description: "Subscriber base attached to elements whose critical time worsened versus the previous day.",
+      formula: "Σ subscribers where latest critical time > previous day",
+    });
+  }
+}
+
+function addBusinessKpis(add: AddKpi, frame: Frame, higherIsBad: boolean, businessContext?: TelecomBusinessContext): void {
+  if (!businessContext) return;
+  if (businessContext.selectedCaseId === "critical_time_comparison") {
+    addCriticalTimeKpis(add, frame, higherIsBad, businessContext);
+  }
+}
+
+function tagBusinessKpiPack(kpis: Kpi[], businessContext?: TelecomBusinessContext): void {
+  if (!businessContext) return;
+  const packs: Record<string, string[]> = {
+    critical_time_comparison: ["Latest Critical Time", "Latest Warning Time", "Worsening MSANs", "Worst MSAN Latest", "Subscribers on Worsening MSANs"],
+    subscriber_impact: ["Total Subscribers", "Largest Segment", "Subscriber Impact", "Segments Tracked", "Tracked Entities"],
+    upgrade_followup: ["Records Analyzed", "Tracked Entities", "Total Subscribers", "Segments Tracked"],
+    congestion_risk: ["Congestion Events", "Chronic Congestion Points", "Peak Utilization", "Average Utilization", "Capacity Risk Index"],
+    capacity_upgrade: ["Capacity Headroom", "Saturating ≤60 Days", "Capacity Risk Index", "Traffic Growth Rate", "Chronic Congestion Points"],
+    alarm_assurance: ["Alarm Volume", "Critical Alarms", "Service Availability", "Records Analyzed"],
+    availability_degradation: ["Service Availability", "SLA Compliance", "Subscriber Impact", "Degradation Trend"],
+    region_performance: ["Average Utilization", "Peak Utilization", "Regional Health", "Records Analyzed"],
+    top_offenders: ["Worst Element Share", "Tracked Entities", "Records Analyzed", "Degradation Trend"],
+    daily_exception: ["Records Analyzed", "Tracked Entities", "Degradation Trend", "Latest Critical Time"],
+  };
+  const names = packs[businessContext.selectedCaseId] ?? [];
+  names.forEach((name, index) => {
+    const kpi = kpis.find((k) => k.name === name);
+    if (!kpi) return;
+    kpi.businessCaseIds = [...new Set([...(kpi.businessCaseIds ?? []), businessContext.selectedCaseId])];
+    kpi.businessPriority = Math.max(kpi.businessPriority ?? 0, names.length - index);
+  });
+}
+
 export function discoverKpis(
   frame: Frame,
   entityStats: EntityStat[],
@@ -180,7 +373,8 @@ export function discoverKpis(
   events: CongestionEvent[],
   healthScore: number,
   isTelecom: boolean,
-  higherIsBad = false
+  higherIsBad = false,
+  businessContext?: TelecomBusinessContext
 ): Kpi[] {
   const kpis: Kpi[] = [];
   const daily = buildDaily(frame, events, isTelecom);
@@ -510,6 +704,7 @@ export function discoverKpis(
     // primary measure daily totals (aggregate-aware: "active"/total rows excluded)
     const dt = measure ? dailyTotals(frame, measure) : { days: [], totals: [] };
     const hasDailyMeasure = dt.totals.length >= 1;
+    addBusinessKpis(add, frame, higherIsBad, businessContext);
 
     /* --- Subscribers (a stock): lead with the real base, not a sum-over-days --- */
     let subsLatest = 0;
@@ -709,5 +904,6 @@ export function discoverKpis(
     });
   }
 
+  tagBusinessKpiPack(kpis, businessContext);
   return kpis;
 }

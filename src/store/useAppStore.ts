@@ -16,8 +16,11 @@ import type {
   AuditEntry,
   ChatMessage,
   DashboardAction,
+  DashboardPlanWarning,
+  DataUnderstandingReport,
   Dataset,
   FilterState,
+  LlmDashboardPlan,
   LlmState,
   PersonaId,
   RoleId,
@@ -28,6 +31,11 @@ import { EMPTY_FILTERS } from "@/lib/types";
 
 /** AbortController for the in-flight chat stream (module scope — not persisted). */
 let chatAbort: AbortController | null = null;
+
+interface AnalyzeOptions {
+  dashboardPlan?: LlmDashboardPlan;
+  dashboardPlanWarnings?: DashboardPlanWarning[];
+}
 
 interface AppState {
   /* theme */
@@ -88,7 +96,7 @@ interface AppState {
   logAudit: (action: string, detail: string) => void;
 
   /* orchestration */
-  ingestAndAnalyze: (dataset: Dataset) => Promise<void>;
+  ingestAndAnalyze: (dataset: Dataset, understanding?: DataUnderstandingReport, opts?: AnalyzeOptions) => Promise<void>;
   ingestAndAnalyzeMany: (datasets: Dataset[]) => Promise<void>;
   selectDataset: (id: string) => void;
   removeDataset: (id: string) => void;
@@ -539,24 +547,33 @@ export const useAppStore = create<AppState>()(
         set({ audit: [entry, ...get().audit].slice(0, 250) });
       },
 
-      ingestAndAnalyze: async (dataset) => {
+      ingestAndAnalyze: async (dataset, understanding, opts) => {
+        const analysisDataset = understanding?.dataset ?? dataset;
         const init: Record<string, { status: AgentStatus; note?: string }> = {};
         set({
-          datasets: [dataset, ...get().datasets.filter((d) => d.id !== dataset.id)].slice(0, 8),
-          activeDatasetId: dataset.id,
+          datasets: [analysisDataset, ...get().datasets.filter((d) => d.id !== analysisDataset.id)].slice(0, 8),
+          activeDatasetId: analysisDataset.id,
           pipelineRunning: true,
           pipelineVisible: true,
           agentStatus: init,
           chat: [],
         });
-        get().logAudit("UPLOAD", `${dataset.name} (${dataset.rowCount.toLocaleString()} rows, ${dataset.fileType})`);
+        get().logAudit("UPLOAD", `${analysisDataset.name} (${analysisDataset.rowCount.toLocaleString()} rows, ${analysisDataset.fileType})`);
+        if (understanding) {
+          const prompt = opts?.dashboardPlan?.prompt ? ` · prompt: ${opts.dashboardPlan.prompt.slice(0, 80)}` : "";
+          get().logAudit("DATA_UNDERSTANDING", `${understanding.domains[0]?.domain ?? "Unknown"} ${understanding.domains[0]?.confidence ?? 0}%${prompt}`);
+        }
         const onProgress = (e: AgentProgressEvent) =>
           set({ agentStatus: { ...get().agentStatus, [e.agentKey]: { status: e.status, note: e.note } } });
         try {
           const llm = get().llm;
-          const analysis = await runPipeline(dataset, {
+          const analysis = await runPipeline(analysisDataset, {
             onProgress,
             theatrical: true,
+            understanding,
+            businessContext: understanding?.businessContext,
+            dashboardPlan: opts?.dashboardPlan,
+            dashboardPlanWarnings: opts?.dashboardPlanWarnings,
             // LLM data-understanding agent (only consulted when heuristics are weak)
             assist:
               llm.status === "connected" && llm.model
@@ -564,19 +581,19 @@ export const useAppStore = create<AppState>()(
                 : undefined,
             onDatasetTransformed: (transformed) => {
               // keep the reshaped dataset so filters re-slice the same table
-              set({ datasets: get().datasets.map((d) => (d.id === dataset.id ? { ...transformed, id: dataset.id, name: dataset.name } : d)) });
-              get().logAudit("LLM_TRANSFORM", `${dataset.name} reshaped to ${transformed.rowCount.toLocaleString()} rows`);
+              set({ datasets: get().datasets.map((d) => (d.id === analysisDataset.id ? { ...transformed, id: analysisDataset.id, name: analysisDataset.name } : d)) });
+              get().logAudit("LLM_TRANSFORM", `${analysisDataset.name} reshaped to ${transformed.rowCount.toLocaleString()} rows`);
             },
           });
           set({
-            analyses: { ...get().analyses, [dataset.id]: analysis },
+            analyses: { ...get().analyses, [analysisDataset.id]: analysis },
             viewAnalysis: analysis,
             pipelineRunning: false,
             filters: { ...EMPTY_FILTERS },
           });
           get().logAudit("ANALYZE", `${analysis.domains[0]?.domain} ${analysis.domains[0]?.confidence}% · ${analysis.kpis.length} KPIs · health ${analysis.healthScore.toFixed(1)}`);
           // Agent 10 LLM enhancement runs in the background — dashboards are live immediately
-          void get().enhanceStory(dataset.id);
+          void get().enhanceStory(analysisDataset.id);
         } catch (err) {
           set({ pipelineRunning: false, pipelineVisible: false });
           throw err;
@@ -713,7 +730,13 @@ async function refreshView(
       set({ viewAnalysis: full, viewLoading: false });
       return;
     }
-    const analysis = await runPipeline(filtered, { theatrical: false });
+    const analysis = await runPipeline(filtered, {
+      theatrical: false,
+      confirmedMapping: full.mapping,
+      dashboardPlan: full.dashboardPlan,
+      dashboardPlanWarnings: full.dashboardPlanWarnings,
+      businessContext: full.businessContext,
+    });
     set({ viewAnalysis: analysis, viewLoading: false });
   } catch {
     set({ viewLoading: false });

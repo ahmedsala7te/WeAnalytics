@@ -7,7 +7,7 @@ import { KpiCard } from "@/components/KpiCard";
 import { RegionTileMap } from "./RegionTileMap";
 import { InsightsPanel } from "./InsightsPanel";
 import { AnomalyList } from "./AnomalyList";
-import { EntityTable, RegionTable } from "./Tables";
+import { BusinessDeltaTable, BusinessStatusBreakdownTable, EntityTable, RegionTable } from "./Tables";
 import {
   areaTrendOption,
   busyHourOption,
@@ -23,7 +23,7 @@ import {
   treemapOption,
   trendOption,
 } from "@/components/charts/options";
-import type { AnalysisResult, Kpi, NamedSeries, WidgetSpec } from "@/lib/types";
+import type { AnalysisResult, DashboardPlanWarning, DashboardReason, Kpi, NamedSeries, TelecomBusinessCaseId, WidgetSpec } from "@/lib/types";
 
 /* ---------------------------- KPI set selection --------------------------- */
 
@@ -35,7 +35,40 @@ const KPI_SETS: Record<string, string[]> = {
   assurance: ["Alarm Volume", "Critical Alarms", "Service Availability", "SLA Compliance", "Subscriber Impact", "Congestion Events"],
 };
 
+const BUSINESS_KPI_SETS: Partial<Record<TelecomBusinessCaseId, string[]>> = {
+  critical_time_comparison: [
+    "Latest Critical Time",
+    "Latest Warning Time",
+    "Worsening MSANs",
+    "Worst MSAN Latest",
+    "Subscribers on Worsening MSANs",
+    "Tracked Entities",
+  ],
+  subscriber_impact: ["Total Subscribers", "Largest Segment", "Subscriber Impact", "Tracked Entities"],
+  upgrade_followup: ["Tracked Entities", "Records Analyzed", "Total Subscribers"],
+  congestion_risk: ["Congestion Events", "Chronic Congestion Points", "Peak Utilization", "Average Utilization", "Capacity Risk Index"],
+  alarm_assurance: ["Alarm Volume", "Critical Alarms", "Service Availability", "Tracked Entities"],
+};
+
 function pickKpis(kpis: Kpi[], key: string | undefined): Kpi[] {
+  if (key?.startsWith("business:")) {
+    const caseId = key.slice("business:".length) as TelecomBusinessCaseId;
+    const business = kpis
+      .filter((k) => k.businessCaseIds?.includes(caseId))
+      .sort((a, b) => (b.businessPriority ?? 0) - (a.businessPriority ?? 0));
+    const picked = [...business];
+    for (const name of BUSINESS_KPI_SETS[caseId] ?? []) {
+      const hit = kpis.find((k) => k.name === name);
+      if (hit && !picked.includes(hit)) picked.push(hit);
+      if (picked.length >= 6) break;
+    }
+    for (const k of kpis) {
+      if (picked.length >= 6) break;
+      const genericNoise = caseId === "critical_time_comparison" && /subscriber growth|degradation trend/i.test(k.name);
+      if (!genericNoise && !picked.includes(k)) picked.push(k);
+    }
+    return picked.slice(0, 6);
+  }
   if (!key || key === "generic") return kpis.slice(0, 8);
   const names = KPI_SETS[key];
   if (!names) return kpis.slice(0, 6);
@@ -100,6 +133,11 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
       case "entity-bars": {
         const list = a.topEntityDaily.slice(0, spec.limit ?? 10);
         if (list.length === 0) return <Empty msg="Needs per-element history (a time dimension)" />;
+        return <EChart option={entityBarsOption(dark, list, a.measureLabel, a.measureIsPct)} height={H - 40} registerAs={spec.title} />;
+      }
+      case "business-comparison-bars": {
+        const list = a.topEntityDaily.slice(0, spec.limit ?? 12);
+        if (list.length === 0) return <Empty msg="Needs per-element time comparison data" />;
         return <EChart option={entityBarsOption(dark, list, a.measureLabel, a.measureIsPct)} height={H - 40} registerAs={spec.title} />;
       }
       case "gauge":
@@ -200,10 +238,25 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
         );
       case "table-regions":
         return <RegionTable regions={a.regionStats} measureLabel={a.measureLabel} isPct={a.measureIsPct} higherIsBad={a.measureHigherIsBad} />;
+      case "business-delta-table":
+        return <BusinessDeltaTable analysis={a} maxRows={spec.limit} />;
+      case "business-status-breakdown":
+        return <BusinessStatusBreakdownTable analysis={a} />;
       case "anomalies":
         return <AnomalyList anomalies={a.anomalies} />;
       case "insights":
         return <InsightsPanel story={a.story} insights={a.insights} compact={!spec.tall} />;
+      case "dashboard-reasoning":
+        return (
+          <DashboardReasoning
+            reasons={a.dashboardReasoning}
+            persona={spec.dataKey ?? "all"}
+            prompt={a.dashboardPlanPrompt}
+            engine={a.dashboardPlanEngine}
+            warnings={a.dashboardPlanWarnings}
+            analysis={a}
+          />
+        );
       case "correlation":
         if (a.correlations.length === 0) return <Empty msg="No significant correlations" />;
         return <EChart option={correlationOption(dark, a.correlations)} height={H - 40} registerAs={spec.title} />;
@@ -221,6 +274,92 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
     >
       {body}
     </WidgetCard>
+  );
+}
+
+function DashboardReasoning({
+  reasons,
+  persona,
+  prompt,
+  engine,
+  warnings = [],
+  analysis,
+}: {
+  reasons: DashboardReason[];
+  persona: string;
+  prompt?: string;
+  engine?: string;
+  warnings?: DashboardPlanWarning[];
+  analysis: AnalysisResult;
+}) {
+  const shown = reasons.filter((r) => r.persona === persona || r.persona === "all").slice(0, 6);
+  if (shown.length === 0) return <Empty msg="No dashboard reasoning available" />;
+  const ctx = analysis.businessContext;
+  return (
+    <div className="space-y-2 p-1">
+      {ctx && (
+        <div className="rounded-xl border border-subtle bg-surface-2 p-3">
+          <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-bold uppercase tracking-[0.08em] text-accent-400">
+            Business Case
+            <span className="rounded-full bg-inset px-1.5 py-px text-[9.5px] text-muted">{ctx.selectedLabel}</span>
+          </div>
+          <p className="mt-1.5 text-[12px] leading-relaxed text-secondary">
+            The dashboard uses the {ctx.selectedLabel.toLowerCase()} playbook. It prioritizes {analysis.measureLabel.toLowerCase()} by element,
+            {ctx.regionColumn ? ` region (${ctx.regionColumn}),` : ""} and latest-vs-previous movement. Deterministic pipeline calculations remain the source of truth.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {[ctx.comparisonMeasure, ctx.warningMeasure, ctx.entityColumn, ctx.regionColumn, ctx.sectorColumn, ctx.subscriberColumn].filter(Boolean).map((c) => (
+              <span key={c} className="rounded-md bg-inset px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                {c}
+              </span>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {ctx.candidates.slice(0, 3).map((c) => (
+              <span key={c.id} className="rounded-md bg-inset px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                {c.label}: {c.score}%
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {(engine || prompt || warnings.length > 0) && (
+        <div className="rounded-xl border border-accent-500/25 bg-accent-500/8 p-3">
+          <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-bold uppercase tracking-[0.08em] text-accent-400">
+            Dashboard Planner
+            <span className="rounded-full bg-inset px-1.5 py-px text-[9.5px] text-muted">{engine ? `${engine} · local` : "deterministic fallback"}</span>
+          </div>
+          {prompt && <p className="mt-1.5 text-[12px] leading-relaxed text-secondary">Prompt: {prompt}</p>}
+          <p className="mt-1.5 text-[12px] leading-relaxed text-secondary">
+            {engine && engine !== "playbook"
+              ? "Ollama refined wording, order, and explanation; the validated telecom playbook controls the required KPI pack and widgets."
+              : "Dashboard layout came from the validated telecom playbook for the confirmed business goal."}
+          </p>
+          {warnings.map((w, i) => (
+            <p key={`${w.severity}-${i}`} className={`mt-1.5 text-[11.5px] leading-relaxed ${w.severity === "critical" ? "text-critical-500" : w.severity === "warning" ? "text-warning-500" : "text-info-500"}`}>
+              {w.message}
+            </p>
+          ))}
+        </div>
+      )}
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {shown.map((r) => (
+          <div key={`${r.persona}-${r.widgetTitle}`} className="rounded-xl border border-subtle bg-surface-2 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-accent-400">{r.widgetTitle}</div>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-secondary">{r.reason}</p>
+            {r.sourceColumns.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {r.sourceColumns.slice(0, 4).map((c) => (
+                  <span key={c} className="rounded-md bg-inset px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                    {c}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
