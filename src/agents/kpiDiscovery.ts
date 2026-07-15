@@ -1,5 +1,6 @@
 import { THRESHOLDS } from "@/lib/constants";
 import { titleCase } from "@/lib/format";
+import { classifyOperationalDelta } from "@/lib/operational";
 import { clamp, linreg, mean, percentile } from "@/lib/stats";
 import type { CongestionEvent, EntityStat, Kpi, KpiStatus, RegionStat, TelecomBusinessContext } from "@/lib/types";
 import { DAY_MS, type Frame } from "./frame";
@@ -149,6 +150,30 @@ function dailyTotals(frame: Frame, col: (number | null)[]): { days: number[]; to
   return { days, totals: days.map((d) => Math.max(real.get(d) ?? 0, agg.get(d) ?? 0)) };
 }
 
+/** Per-day mean for measures that are already averages/rates at row level. */
+function dailyMeans(frame: Frame, col: (number | null)[]): { days: number[]; totals: number[] } {
+  const byDay = new Map<number, { sum: number; count: number }>();
+  for (let i = 0; i < frame.n; i++) {
+    const t = frame.t[i];
+    const v = col[i];
+    if (t === null || v === null || v === undefined) continue;
+    if (frame.aggregateMask && frame.aggregateMask[i]) continue;
+    const d = Math.floor((t - frame.timeStart) / DAY_MS);
+    const cur = byDay.get(d) ?? { sum: 0, count: 0 };
+    cur.sum += v;
+    cur.count += 1;
+    byDay.set(d, cur);
+  }
+  const days = [...byDay.keys()].sort((a, b) => a - b);
+  return {
+    days,
+    totals: days.map((d) => {
+      const cur = byDay.get(d)!;
+      return cur.count ? cur.sum / cur.count : 0;
+    }),
+  };
+}
+
 function splitWindows<T>(arr: T[]): { cur: T[]; prev: T[] } {
   const w = Math.min(7, Math.max(1, Math.floor(arr.length / 2)));
   return { cur: arr.slice(-w), prev: arr.slice(-2 * w, -w) };
@@ -187,12 +212,12 @@ function changeStatus(changePct: number | null, higherIsBad: boolean): KpiStatus
   return "healthy";
 }
 
-function entityDailyDeltas(frame: Frame, higherIsBad: boolean): {
+export function entityDailyDeltas(frame: Frame, higherIsBad: boolean): {
   rows: { entity: string; latest: number; previous: number; delta: number; deltaPct: number | null; subscribers: number }[];
   worsening: { entity: string; latest: number; previous: number; delta: number; deltaPct: number | null; subscribers: number }[];
 } {
   if (!frame.measure || !frame.hasTime || !frame.entity) return { rows: [], worsening: [] };
-  const byEntity = new Map<string, Map<number, number>>();
+  const byEntity = new Map<string, Map<number, { sum: number; count: number }>>();
   for (let i = 0; i < frame.n; i++) {
     const t = frame.t[i];
     const v = frame.measure[i];
@@ -205,20 +230,28 @@ function entityDailyDeltas(frame: Frame, higherIsBad: boolean): {
       byDay = new Map();
       byEntity.set(entity, byDay);
     }
-    byDay.set(day, (byDay.get(day) ?? 0) + v);
+    const cur = byDay.get(day) ?? { sum: 0, count: 0 };
+    cur.sum += v;
+    cur.count += 1;
+    byDay.set(day, cur);
   }
   const rows = [...byEntity.entries()]
     .map(([entity, byDay]) => {
       const days = [...byDay.keys()].sort((a, b) => a - b);
-      const latest = byDay.get(days[days.length - 1]) ?? 0;
-      const previous = byDay.get(days[days.length - 2]) ?? 0;
+      const value = (d: number) => {
+        const cur = byDay.get(d);
+        if (!cur) return 0;
+        return frame.measureKind === "stock" && cur.count ? cur.sum / cur.count : cur.sum;
+      };
+      const latest = value(days[days.length - 1]);
+      const previous = value(days[days.length - 2]);
       const subs = frame.subscribers && frame.entity
         ? maxSubscriberForEntity(frame, entity)
         : 0;
       return { entity, latest, previous, delta: latest - previous, deltaPct: change(latest, previous), subscribers: subs };
     })
     .sort((a, b) => (higherIsBad ? b.delta - a.delta || b.latest - a.latest : a.delta - b.delta || b.latest - a.latest));
-  const worsening = rows.filter((r) => (higherIsBad ? r.delta > 0 : r.delta < 0));
+  const worsening = rows.filter((r) => classifyOperationalDelta(r.previous, r.latest, higherIsBad).state === "worsened");
   return { rows, worsening };
 }
 
@@ -237,13 +270,13 @@ function addCriticalTimeKpis(add: AddKpi, frame: Frame, higherIsBad: boolean, bu
   const businessCaseIds = [businessContext.selectedCaseId];
   if (!frame.measure) return;
   const label = titleCase(frame.measureName);
-  const dt = dailyTotals(frame, frame.measure);
+  const dt = dailyMeans(frame, frame.measure);
   if (dt.totals.length === 0) return;
   const latest = dt.totals[dt.totals.length - 1];
   const previous = dt.totals.length >= 2 ? dt.totals[dt.totals.length - 2] : null;
   const latestChange = change(latest, previous);
   add({
-    name: "Latest Critical Time",
+    name: "Average Critical Time / MSAN",
     category: "assurance",
     businessCaseIds,
     businessPriority: 10,
@@ -254,18 +287,18 @@ function addCriticalTimeKpis(add: AddKpi, frame: Frame, higherIsBad: boolean, bu
     goodWhen: "low",
     status: changeStatus(latestChange, true),
     spark: dt.totals,
-    description: `Latest-day total for ${label}, the main operational measure for this report.`,
-    formula: `Σ ${frame.measureName} on latest day`,
+    description: `Latest-day mean ${label} across MSANs; row-level averages are not summed.`,
+    formula: `mean(${frame.measureName}) across MSANs on latest day`,
   });
 
   if (frame.warningMeasure && frame.warningMeasureName && frame.warningMeasureName !== frame.measureName) {
-    const wt = dailyTotals(frame, frame.warningMeasure);
+    const wt = dailyMeans(frame, frame.warningMeasure);
     if (wt.totals.length > 0) {
       const warningLatest = wt.totals[wt.totals.length - 1];
       const warningPrev = wt.totals.length >= 2 ? wt.totals[wt.totals.length - 2] : null;
       const warningChange = change(warningLatest, warningPrev);
       add({
-        name: "Latest Warning Time",
+        name: "Average Warning Time / MSAN",
         category: "assurance",
         businessCaseIds,
         businessPriority: 9,
@@ -276,8 +309,8 @@ function addCriticalTimeKpis(add: AddKpi, frame: Frame, higherIsBad: boolean, bu
         goodWhen: "low",
         status: changeStatus(warningChange, true),
         spark: wt.totals,
-        description: `Latest-day total for ${titleCase(frame.warningMeasureName)}.`,
-        formula: `Σ ${frame.warningMeasureName} on latest day`,
+        description: `Latest-day mean ${titleCase(frame.warningMeasureName)} across MSANs.`,
+        formula: `mean(${frame.warningMeasureName}) across MSANs on latest day`,
       });
     }
   }
@@ -295,8 +328,8 @@ function addCriticalTimeKpis(add: AddKpi, frame: Frame, higherIsBad: boolean, bu
     goodWhen: "low",
     status: deltas.worsening.length > 10 ? "critical" : deltas.worsening.length > 0 ? "warning" : "healthy",
     spark: [],
-    description: "Number of elements whose latest critical-time value increased versus the previous day.",
-    formula: "count(entity where latest critical time > previous day)",
+    description: "Number of elements whose latest critical-time value worsened materially versus the previous day (2% noise band).",
+    formula: "count(entity where material latest critical time change is worse than previous day)",
   });
   const worst = [...deltas.rows].sort((a, b) => b.latest - a.latest)[0];
   if (worst) {
@@ -346,7 +379,7 @@ function addBusinessKpis(add: AddKpi, frame: Frame, higherIsBad: boolean, busine
 function tagBusinessKpiPack(kpis: Kpi[], businessContext?: TelecomBusinessContext): void {
   if (!businessContext) return;
   const packs: Record<string, string[]> = {
-    critical_time_comparison: ["Latest Critical Time", "Latest Warning Time", "Worsening MSANs", "Worst MSAN Latest", "Subscribers on Worsening MSANs"],
+    critical_time_comparison: ["Average Critical Time / MSAN", "Average Warning Time / MSAN", "Worsening MSANs", "Worst MSAN Latest", "Subscribers on Worsening MSANs"],
     subscriber_impact: ["Total Subscribers", "Largest Segment", "Subscriber Impact", "Segments Tracked", "Tracked Entities"],
     upgrade_followup: ["Records Analyzed", "Tracked Entities", "Total Subscribers", "Segments Tracked"],
     congestion_risk: ["Congestion Events", "Chronic Congestion Points", "Peak Utilization", "Average Utilization", "Capacity Risk Index"],
@@ -702,7 +735,7 @@ export function discoverKpis(
     const goodDir: Kpi["goodWhen"] = higherIsBad ? "low" : "high";
 
     // primary measure daily totals (aggregate-aware: "active"/total rows excluded)
-    const dt = measure ? dailyTotals(frame, measure) : { days: [], totals: [] };
+    const dt = measure ? (isFlow ? dailyTotals(frame, measure) : dailyMeans(frame, measure)) : { days: [], totals: [] };
     const hasDailyMeasure = dt.totals.length >= 1;
     addBusinessKpis(add, frame, higherIsBad, businessContext);
 

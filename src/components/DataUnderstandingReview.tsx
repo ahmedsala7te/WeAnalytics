@@ -126,6 +126,8 @@ export function DataUnderstandingReview({
                 <MappingLine label="Timestamp" value={report.mapping.timestamp} />
                 <MappingLine label="Entity / Segment" value={report.mapping.entity} />
                 <MappingLine label="Region / Group" value={report.mapping.region} />
+                <MappingLine label="Latitude" value={report.mapping.latitude} />
+                <MappingLine label="Longitude" value={report.mapping.longitude} />
                 <MappingLine label="Primary Measure" value={report.mapping.primaryMeasure} />
                 <MappingLine label="Utilization" value={report.mapping.utilization} />
                 <MappingLine label="Traffic / Volume" value={report.mapping.traffic} />

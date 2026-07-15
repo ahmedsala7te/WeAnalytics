@@ -1,5 +1,6 @@
 import { fmtDate, fmtNum, fmtPct, fmtSigned, titleCase, uid } from "@/lib/format";
 import { healthLabel, THRESHOLDS } from "@/lib/constants";
+import { classifyOperationalDelta, MATERIAL_CHANGE_PCT } from "@/lib/operational";
 import { paretoCover } from "@/lib/stats";
 import type {
   Anomaly,
@@ -12,8 +13,10 @@ import type {
   Kpi,
   RegionStat,
   RootCauseReport,
+  TelecomBusinessContext,
 } from "@/lib/types";
 import { DAY_MS, type Frame } from "./frame";
+import { entityDailyDeltas } from "./kpiDiscovery";
 
 /* ------------------------------------------------------------------------
  * Agent 10 — Executive Storytelling
@@ -37,7 +40,8 @@ export function composeStory(
   forecasts: ForecastResult[],
   healthScore: number,
   utilMode: boolean,
-  higherIsBad = false
+  higherIsBad = false,
+  businessContext?: TelecomBusinessContext
 ): StoryOutput {
   const insights: Insight[] = [];
   const windowDays = frame.hasTime ? Math.max(1, Math.round((frame.timeEnd - frame.timeStart) / DAY_MS)) : 0;
@@ -51,7 +55,73 @@ export function composeStory(
   const risks: string[] = [];
   const recommendations: string[] = [];
 
-  if (utilMode && entityStats.length > 0) {
+  if (businessContext?.selectedCaseId === "critical_time_comparison" && frame.measure && frame.hasTime) {
+    const averageCritical = kpi("Average Critical Time / MSAN");
+    const averageWarning = kpi("Average Warning Time / MSAN");
+    const impactedKpi = kpi("Subscribers on Worsening MSANs");
+    const deltas = entityDailyDeltas(frame, true);
+    const worsening = [...deltas.worsening].sort((a, b) => b.delta - a.delta || b.latest - a.latest);
+    const improved = deltas.rows.filter((r) => classifyOperationalDelta(r.previous, r.latest, true).state === "improved");
+    const stable = deltas.rows.length - worsening.length - improved.length;
+    const worstLatest = [...deltas.rows].sort((a, b) => b.latest - a.latest)[0];
+    const topWorsener = worsening[0];
+    const entityByName = new Map(entityStats.map((e) => [e.entity, e]));
+    const days = [...new Set(frame.t.filter((t): t is number => t !== null).map((t) => frame.timeStart + Math.floor((t - frame.timeStart) / DAY_MS) * DAY_MS))].sort((a, b) => a - b);
+    const latestDate = days.at(-1);
+    const previousDate = days.at(-2);
+    const criticalChange = averageCritical?.changePct ?? null;
+    const direction = criticalChange === null
+      ? "could not be compared with the prior period"
+      : criticalChange < 0
+        ? `improved ${fmtPct(Math.abs(criticalChange), 1)}`
+        : criticalChange > 0
+          ? `worsened ${fmtPct(criticalChange, 1)}`
+          : "was unchanged";
+    const impacted = impactedKpi?.value ?? worsening.reduce((sum, r) => sum + r.subscribers, 0);
+
+    headline = worsening.length > 0
+      ? `Critical time ${direction}, but ${worsening.length} of ${deltas.rows.length} MSANs worsened materially; ${fmtNum(impacted, 0)} subscribers are exposed.`
+      : `Critical time ${direction}; no MSAN crossed the ${MATERIAL_CHANGE_PCT}% deterioration threshold.`;
+
+    summary = [
+      averageCritical
+        ? `On ${fmtDate(latestDate)}, average critical time was ${fmtNum(averageCritical.value, 1)} minutes per MSAN${averageCritical.previous !== null ? ` versus ${fmtNum(averageCritical.previous, 1)} on ${fmtDate(previousDate)} (${fmtSigned(averageCritical.changePct, 1)})` : ""}.`
+        : "",
+      "This is the mean of the per-MSAN values, not a sum of averages and not a per-subscriber duration.",
+      `${worsening.length} of ${deltas.rows.length} MSANs worsened beyond the ${MATERIAL_CHANGE_PCT}% materiality band${impacted > 0 ? `, representing ${fmtNum(impacted, 0)} attached subscribers` : ""}; ${improved.length} improved and ${stable} were stable.`,
+      worstLatest ? `${worstLatest.entity} has the highest latest critical time at ${fmtNum(worstLatest.latest, 0)} minutes.` : "",
+    ].filter(Boolean).join(" ");
+
+    if (averageCritical) {
+      keyInsights.push(`Network mean critical time: ${fmtNum(averageCritical.value, 1)} minutes/MSAN (${fmtSigned(averageCritical.changePct, 1)} vs ${fmtDate(previousDate)}).`);
+    }
+    if (topWorsener) {
+      const stat = entityByName.get(topWorsener.entity);
+      keyInsights.push(
+        `${topWorsener.entity}${stat?.region ? ` (${stat.region})` : ""} is the largest deterioration: ${fmtNum(topWorsener.previous, 0)} → ${fmtNum(topWorsener.latest, 0)} minutes (${fmtSigned(topWorsener.deltaPct, 1)}), ${fmtNum(topWorsener.subscribers, 0)} subscribers.`
+      );
+    }
+    if (worstLatest) {
+      keyInsights.push(`${worstLatest.entity} remains the highest absolute exposure at ${fmtNum(worstLatest.latest, 0)} minutes, ${worstLatest.delta < 0 ? "despite improving" : "and requires follow-up"}.`);
+    }
+    if (averageWarning) {
+      keyInsights.push(`Network mean warning time: ${fmtNum(averageWarning.value, 1)} minutes/MSAN (${fmtSigned(averageWarning.changePct, 1)} vs prior period).`);
+    }
+    keyInsights.push(`${improved.length} MSANs improved materially; ${stable} stayed within the ${MATERIAL_CHANGE_PCT}% noise band.`);
+
+    if (topWorsener) {
+      risks.push(`${topWorsener.entity} increased by ${fmtNum(topWorsener.delta, 0)} minutes day over day, the clearest immediate operational exception.`);
+    }
+    if (worstLatest) risks.push(`${worstLatest.entity} has the highest latest critical-time level (${fmtNum(worstLatest.latest, 0)} minutes), even if its daily movement is small.`);
+    risks.push("This extract contains duration, subscriber, status and location fields but no alarm, availability or utilization evidence; it cannot prove root cause.");
+
+    if (worsening.length > 0) {
+      recommendations.push(`Investigate the top deteriorating MSANs within 24 hours: ${worsening.slice(0, 3).map((r) => r.entity).join(", ")}.`);
+    }
+    if (worstLatest) recommendations.push(`Review ${worstLatest.entity} for persistent high critical time, even if its latest delta is improving or stable.`);
+    recommendations.push("Correlate these exceptions with alarm history, availability, utilization and recent change tickets before assigning a root cause.");
+    recommendations.push("Include an explicit report date for every period block in future exports so no date has to be inferred from column order.");
+  } else if (utilMode && entityStats.length > 0) {
     /* ------------------------------ headline ------------------------------ */
     if (chronic.length > 0) {
       headline = `Network health is ${healthScore.toFixed(1)}/100 (${healthLabel(healthScore)}) — ${chronic.length} chronic congestion point${

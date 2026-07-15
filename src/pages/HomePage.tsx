@@ -20,7 +20,6 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { SAMPLES } from "@/data/sampleGenerator";
-import { ingestFile } from "@/agents/ingestion";
 import { buildDataUnderstanding, selectBusinessCase } from "@/agents/dataUnderstanding";
 import { buildTelecomPlaybookPlan } from "@/agents/telecomBusinessCases";
 import { planDashboardWithOllama } from "@/llm/dashboardPlanner";
@@ -74,6 +73,7 @@ export function HomePage() {
       setParsing(true);
       const reviews: DataUnderstandingReport[] = [];
       const errors: string[] = [];
+      const { ingestFile } = await import("@/agents/ingestion");
       for (const file of list) {
         try {
           const dataset = await ingestFile(file);

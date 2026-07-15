@@ -13,6 +13,8 @@ export interface Frame {
   region: string[] | null;
   technology: string[] | null;
   vendor: string[] | null;
+  latitude: (number | null)[] | null;
+  longitude: (number | null)[] | null;
   util: (number | null)[] | null;
   traffic: (number | null)[] | null;
   capacity: (number | null)[] | null;
@@ -110,6 +112,8 @@ export function extractFrame(dataset: Dataset, mapping: SemanticMapping, busines
     region,
     technology: strCol(mapping.technology),
     vendor: strCol(mapping.vendor),
+    latitude: numCol(mapping.latitude),
+    longitude: numCol(mapping.longitude),
     util,
     traffic: numCol(mapping.traffic),
     capacity: numCol(mapping.capacity),

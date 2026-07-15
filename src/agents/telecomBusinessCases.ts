@@ -121,7 +121,8 @@ export function buildTelecomPlaybookPlan(
   engine = "playbook"
 ): LlmDashboardPlan {
   const ctx = { ...report.businessContext, selectedCaseId, selectedLabel: CASE_LABELS[selectedCaseId] };
-  const widgets = widgetsForCase(ctx);
+  const hasGeo = !!report.mapping.latitude && !!report.mapping.longitude;
+  const widgets = widgetsForCase(ctx, hasGeo);
   return {
     prompt,
     engine,
@@ -134,19 +135,20 @@ export function buildTelecomPlaybookPlan(
       persona: personaForCase(selectedCaseId),
       widgetTitle: w.title,
       reason: reasonForWidget(selectedCaseId, w.type),
-      sourceColumns: compact([ctx.primaryMeasure, ctx.comparisonMeasure, ctx.warningMeasure, ctx.entityColumn, ctx.regionColumn, ctx.subscriberColumn]).slice(0, 6),
+      sourceColumns: compact([ctx.primaryMeasure, ctx.comparisonMeasure, ctx.warningMeasure, ctx.entityColumn, ctx.regionColumn, ctx.subscriberColumn, report.mapping.latitude, report.mapping.longitude]).slice(0, 8),
     })),
     warnings: [],
     rawIntent: `Selected telecom business case: ${CASE_LABELS[selectedCaseId]}.`,
   };
 }
 
-function widgetsForCase(ctx: TelecomBusinessContext): WidgetSpec[] {
+function widgetsForCase(ctx: TelecomBusinessContext, hasGeo: boolean): WidgetSpec[] {
   const id = ctx.selectedCaseId;
   const businessKey = id;
   const base: WidgetSpec[] = [
     w("kpi-grid", "Key Performance Indicators", 4, { dataKey: `business:${id}`, playbookKey: "kpis" }),
     w("dashboard-reasoning", "Why This Dashboard", 4, { dataKey: personaForCase(id), playbookKey: "reasoning" }),
+    ...(hasGeo ? [w("geo-map-3d", "Egypt Network Digital Twin", 4, { tall: true, playbookKey: "geo-map" })] : []),
   ];
   if (id === "critical_time_comparison") {
     return [
@@ -221,6 +223,7 @@ function descriptionForCase(id: TelecomBusinessCaseId): string {
 }
 
 function reasonForWidget(id: TelecomBusinessCaseId, type: WidgetSpec["type"]): string {
+  if (type === "geo-map-3d") return "Maps uploaded coordinates onto the Egypt digital twin so regional risk can be traced to physical network elements.";
   if (type === "business-comparison-bars") return "Shows the same operational measure across daily periods so users can compare movement by element.";
   if (type === "business-delta-table") return "Ranks offenders by latest value and delta so daily operations can act on worsening items.";
   if (type === "business-status-breakdown") return "Summarizes status/category distribution for rollout or exception follow-up.";

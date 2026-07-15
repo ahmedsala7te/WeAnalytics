@@ -24,7 +24,6 @@ import { SUGGESTED_QUESTIONS } from "@/lib/constants";
 import { useAppStore } from "@/store/useAppStore";
 import { EChart } from "@/components/EChart";
 import { chatChartOption } from "@/components/charts/options";
-import { exportCongestionCsv, exportKpiCsv, exportPdf, exportPptx, exportXlsx } from "@/agents/reporting";
 import type { ChatMessage } from "@/lib/types";
 
 /** Minimal markdown: **bold**, `code`, newlines, bullet lines. */
@@ -150,22 +149,24 @@ export function CopilotPanel({ onClose }: { onClose?: () => void }) {
     const reply = await ask(q.trim());
     if (reply?.action && analysis) {
       // chat-triggered export
-      setTimeout(() => {
-        if (reply.action === "export-pdf") exportPdf(analysis, dark);
-        if (reply.action === "export-pptx") void exportPptx(analysis, dark);
-        if (reply.action === "export-xlsx") exportXlsx(analysis);
+      setTimeout(async () => {
+        const reporting = await import("@/agents/reporting");
+        if (reply.action === "export-pdf") reporting.exportPdf(analysis, dark);
+        if (reply.action === "export-pptx") void reporting.exportPptx(analysis, dark);
+        if (reply.action === "export-xlsx") reporting.exportXlsx(analysis);
         logAudit("EXPORT", `Assistant-triggered ${reply.action}`);
       }, 400);
     }
   };
 
-  const doExport = (kind: string) => {
+  const doExport = async (kind: string) => {
     if (!analysis) return;
-    if (kind === "pdf") exportPdf(analysis, dark);
-    if (kind === "pptx") void exportPptx(analysis, dark);
-    if (kind === "xlsx") exportXlsx(analysis);
-    if (kind === "kpi-csv") exportKpiCsv(analysis);
-    if (kind === "events-csv") exportCongestionCsv(analysis);
+    const reporting = await import("@/agents/reporting");
+    if (kind === "pdf") reporting.exportPdf(analysis, dark);
+    if (kind === "pptx") void reporting.exportPptx(analysis, dark);
+    if (kind === "xlsx") reporting.exportXlsx(analysis);
+    if (kind === "kpi-csv") reporting.exportKpiCsv(analysis);
+    if (kind === "events-csv") reporting.exportCongestionCsv(analysis);
     logAudit("EXPORT", kind);
   };
 

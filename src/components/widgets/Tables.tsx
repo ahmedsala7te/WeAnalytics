@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ArrowUpDown, Flame } from "lucide-react";
 import { healthColor, utilColor } from "@/lib/constants";
 import { fmtDate, fmtNum, fmtPct, fmtSigned } from "@/lib/format";
+import { classifyOperationalDelta, MATERIAL_CHANGE_PCT } from "@/lib/operational";
 import type { AnalysisResult, EntityStat, RegionStat } from "@/lib/types";
 
 /* --------------------------- shared table chrome -------------------------- */
@@ -295,11 +296,15 @@ export function BusinessDeltaTable({ analysis, maxRows }: { analysis: AnalysisRe
         const previous = previousPoint?.v ?? 0;
         const delta = latest - previous;
         const deltaPct = Math.abs(previous) > 1e-9 ? (delta / Math.abs(previous)) * 100 : null;
+        const movement = classifyOperationalDelta(previous, latest, analysis.measureHigherIsBad);
         const stat = stats.get(s.name);
-        return { entity: s.name, latest, previous, delta, deltaPct, latestT: latestPoint?.t, previousT: previousPoint?.t, stat };
+        return { entity: s.name, latest, previous, delta, deltaPct, movement, latestT: latestPoint?.t, previousT: previousPoint?.t, stat };
       })
       .sort((a, b) => {
-        if (analysis.measureHigherIsBad) return b.delta - a.delta || b.latest - a.latest;
+        if (analysis.measureHigherIsBad) {
+          const priority = (state: typeof a.movement.state) => state === "worsened" ? 2 : state === "stable" ? 1 : 0;
+          return priority(b.movement.state) - priority(a.movement.state) || b.delta - a.delta || b.latest - a.latest;
+        }
         return b.latest - a.latest;
       })
       .slice(0, maxRows ?? 14);
@@ -325,7 +330,7 @@ export function BusinessDeltaTable({ analysis, maxRows }: { analysis: AnalysisRe
         </thead>
         <tbody>
           {rows.map((r) => {
-            const deltaClass = r.delta > 0 ? (analysis.measureHigherIsBad ? "text-critical-500" : "text-success-500") : r.delta < 0 ? "text-success-500" : "text-muted";
+            const deltaClass = r.movement.state === "worsened" ? "text-critical-500" : r.movement.state === "improved" ? "text-success-500" : "text-muted";
             return (
               <tr key={r.entity} className="border-t border-subtle transition-colors hover:bg-surface-2">
                 <td className="px-3 py-2 font-semibold text-primary">{r.entity}</td>
@@ -339,12 +344,16 @@ export function BusinessDeltaTable({ analysis, maxRows }: { analysis: AnalysisRe
                 <td className="px-3 py-2 tabular-nums text-secondary">{r.stat?.subscribers ? fmtNum(r.stat.subscribers, 0) : "—"}</td>
                 <td className="px-3 py-2 text-[11px] leading-relaxed text-muted">
                   {analysis.measureHigherIsBad
-                    ? r.delta > 0
+                    ? r.movement.state === "worsened"
                       ? "Worsened vs previous day"
-                      : "High latest value"
-                    : r.delta < 0
+                      : r.movement.state === "stable"
+                        ? `Stable (within ${MATERIAL_CHANGE_PCT}% band)`
+                        : "Improved; monitor high latest value"
+                    : r.movement.state === "worsened"
                       ? "Dropped vs previous day"
-                      : "Highest latest value"}
+                      : r.movement.state === "stable"
+                        ? `Stable (within ${MATERIAL_CHANGE_PCT}% band)`
+                        : "Improved vs previous day"}
                 </td>
               </tr>
             );

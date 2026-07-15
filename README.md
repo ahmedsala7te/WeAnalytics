@@ -31,6 +31,7 @@ click regions on the health map, ask the Copilot *"Why is congestion increasing?
 | Capability | How |
 |---|---|
 | **Ingestion** | CSV / TSV, Excel, JSON, XML, ZIP archives — parsed entirely in-browser (up to 250K rows) |
+| **Egypt network digital twin** | Detects latitude/longitude columns, validates Egypt coordinates, corrects swapped pairs, aggregates site KPIs, and renders interactive Sites, 3D risk-column, and Heat layers with MapLibre GL + Deck.gl |
 | **Domain detection** | Column-name + semantic fingerprinting → ranked confidence (Telecom 98%, PM 96%, …) |
 | **KPI discovery** | Auto-derives 15+ KPIs (health score, utilization, congestion, headroom, growth, SLA, MTTR-class metrics) with prior-window comparison, sparkline and status |
 | **Telecom intelligence** | Congestion (≥90%), chronic congestion (≥5 days / 14-day window), saturation forecasting, alarm storms, SLA violations, subscriber impact |
@@ -90,8 +91,10 @@ ollama pull qwen2.5:3b-instruct
 src/
   agents/          # the 12 AI agents + orchestrator
   components/      # EChart wrapper, KPI cards, widgets, copilot, filter bar
+  components/widgets/EgyptNetworkMap.tsx  # lazy-loaded 3D Egypt network map
   components/charts/options.ts   # all ECharts option builders (theme-aware)
   data/            # realistic sample dataset generators (seeded)
+  data/egyptGeography.ts  # offline Egypt outline + telecom region centers
   layouts/         # app shell (sidebar + outlet)
   lib/             # types, stats toolkit, constants, formatting, chart registry
   pages/           # Login, Data Hub, Workspace, Connectors, Settings
@@ -111,6 +114,9 @@ src/
 The profiling agent handles considerably messy real files:
 
 - **Long format**: any table with a timestamp, element/region dimensions and numeric measures.
+- **Geospatial data**: headers such as `lat`, `latitude`, `lng`, `lon`, and `longitude` are detected automatically.
+  Valid Egypt coordinates generate the digital-twin map; invalid/out-of-country rows are reported, and consistently
+  reversed latitude/longitude pairs are corrected. Site selection can cross-filter the rest of the dashboard.
 - **Wide formats — reshaped automatically (deterministic)**: hourly columns (H0…H23), date-named columns
   ("2026-05-01", "2026-05-02"…), and period-repeated blocks (`report_date_d1, kpi_a_d1, kpi_b_d1, report_date_d2,
   kpi_a_d2…` — e.g. daily "Critical MSANs" reports) are unpivoted into a proper time series before analysis.
@@ -145,5 +151,7 @@ file is skipped with a message; the others still land).
 ## Notes & limits
 
 - Datasets live in browser memory for the session (no backend). Connectors page documents the production integration points.
+- The bundled Egypt boundary is an offline operational outline for the MVP. A production deployment can replace it
+  with an approved high-resolution governorate GeoJSON without changing the analytics contract.
 - Authentication is a local RBAC simulation; production deployments federate with AD/LDAP/SSO.
 - Tested with Node 18+ (built on Node 24), modern Chromium/Firefox/Edge.

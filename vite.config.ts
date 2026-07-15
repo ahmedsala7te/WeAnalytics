@@ -19,6 +19,8 @@ export default defineConfig({
           vendor: ["react", "react-dom", "react-router-dom", "framer-motion", "zustand"],
           parsing: ["papaparse", "xlsx", "jszip", "fast-xml-parser"],
           exporting: ["jspdf", "pptxgenjs"],
+          maplibre: ["maplibre-gl"],
+          deck: ["@deck.gl/core", "@deck.gl/layers", "@deck.gl/aggregation-layers", "@deck.gl/mapbox"],
         },
       },
     },

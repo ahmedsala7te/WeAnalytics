@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { healthLabel } from "@/lib/constants";
 import { useAppStore } from "@/store/useAppStore";
 import { EChart } from "@/components/EChart";
@@ -24,6 +24,8 @@ import {
   trendOption,
 } from "@/components/charts/options";
 import type { AnalysisResult, DashboardPlanWarning, DashboardReason, Kpi, NamedSeries, TelecomBusinessCaseId, WidgetSpec } from "@/lib/types";
+
+const EgyptNetworkMap = lazy(() => import("./EgyptNetworkMap").then((m) => ({ default: m.EgyptNetworkMap })));
 
 /* ---------------------------- KPI set selection --------------------------- */
 
@@ -149,6 +151,12 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
         );
       case "tilemap":
         return <RegionTileMap regions={a.regionStats} measureLabel={a.measureLabel} isPct={a.measureIsPct} />;
+      case "geo-map-3d":
+        return (
+          <Suspense fallback={<div className="skeleton min-h-[590px] w-full" aria-label="Loading Egypt 3D map" />}>
+            <EgyptNetworkMap analysis={a} />
+          </Suspense>
+        );
       case "trend": {
         if (!a.dailyTrend) return <Empty msg="No time dimension detected" />;
         const series = spec.dataKey === "regions" && a.dailyTrend.byRegion.length > 1 ? a.dailyTrend.byRegion : [a.dailyTrend.overall];
@@ -270,7 +278,7 @@ export function WidgetRenderer({ spec, analysis, index }: { spec: WidgetSpec; an
       title={spec.title}
       subtitle={spec.subtitle}
       delay={delay}
-      className={`${SPAN_CLASS[spec.span]} ${spec.type === "kpi-grid" || spec.type === "tilemap" ? "" : spec.tall ? "min-h-[480px]" : "min-h-[340px]"}`}
+      className={`${SPAN_CLASS[spec.span]} ${spec.type === "geo-map-3d" ? "min-h-[680px]" : spec.type === "kpi-grid" || spec.type === "tilemap" ? "" : spec.tall ? "min-h-[480px]" : "min-h-[340px]"}`}
     >
       {body}
     </WidgetCard>

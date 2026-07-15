@@ -31,6 +31,8 @@ interface PlanJson {
   entity?: string | null;
   region?: string | null;
   timestamp?: string | null;
+  latitude?: string | null;
+  longitude?: string | null;
   subscribers?: string | null;
   utilization?: string | null;
   capacity?: string | null;
@@ -53,6 +55,8 @@ JSON schema:
  "entity": "column holding the network element / item identifier (prefer hostname or code), or null",
  "region": "column holding the geographic/organizational grouping, or null",
  "timestamp": "column holding the record timestamp (long-format tables only), or null",
+ "latitude": "numeric latitude column, or null",
+ "longitude": "numeric longitude/lng/lon column, or null",
  "subscribers": "column with subscriber/customer counts, or null",
  "utilization": "column with utilization PERCENT (values 0-100), or null",
  "capacity": "column with capacity (ports/Mbps), or null",
@@ -234,6 +238,10 @@ export async function runMappingAssist(
     const ts = ncol(plan.timestamp);
     if (ts && newProfile.find((p) => p.name === ts)?.role === "datetime") mapping.timestamp = ts;
   }
+  const latitude = nNumeric(plan.latitude);
+  if (latitude) mapping.latitude = latitude;
+  const longitude = nNumeric(plan.longitude);
+  if (longitude) mapping.longitude = longitude;
   const subs = nNumeric(plan.subscribers);
   if (subs) mapping.subscribers = subs;
   const cap = nNumeric(plan.capacity);

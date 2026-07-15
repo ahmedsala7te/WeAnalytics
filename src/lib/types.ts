@@ -14,6 +14,8 @@ export type SemanticTag =
   | "capacity"
   | "region"
   | "city"
+  | "latitude"
+  | "longitude"
   | "entity"
   | "interface"
   | "subscribers"
@@ -73,6 +75,8 @@ export interface SemanticMapping {
   entity?: string;
   region?: string;
   city?: string;
+  latitude?: string;
+  longitude?: string;
   utilization?: string;
   traffic?: string;
   capacity?: string;
@@ -95,6 +99,8 @@ export type MappingOverrideField =
   | "timestamp"
   | "entity"
   | "region"
+  | "latitude"
+  | "longitude"
   | "technology"
   | "utilization"
   | "traffic"
@@ -143,7 +149,7 @@ export interface UnpivotGroup {
 export interface TransformPlan {
   domainHint?: string;
   mapping?: Partial<Record<
-    "timestamp" | "entity" | "region" | "city" | "utilization" | "traffic" | "capacity" | "subscribers" | "alarms" | "criticalAlarms" | "availability" | "latency" | "packetLoss" | "technology" | "vendor" | "severity",
+    "timestamp" | "entity" | "region" | "city" | "latitude" | "longitude" | "utilization" | "traffic" | "capacity" | "subscribers" | "alarms" | "criticalAlarms" | "availability" | "latency" | "packetLoss" | "technology" | "vendor" | "severity",
     string | null
   >>;
   unpivot?: { groups: UnpivotGroup[]; keepColumns: string[] } | null;
@@ -344,6 +350,7 @@ export type WidgetType =
   | "kpi-grid"
   | "gauge"
   | "tilemap"
+  | "geo-map-3d"
   | "trend"
   | "area-trend"
   | "heatmap"
@@ -435,6 +442,28 @@ export interface BusinessStatusItem {
   subscribersImpacted: number;
 }
 
+export interface GeoSiteStat {
+  entity: string;
+  region: string;
+  latitude: number;
+  longitude: number;
+  avgUtil: number;
+  peakUtil: number;
+  riskScore: number;
+  alarmCount: number;
+  subscribers: number;
+  technology?: string;
+  vendor?: string;
+}
+
+export interface GeoQuality {
+  validRows: number;
+  invalidRows: number;
+  outsideEgyptRows: number;
+  swappedCoordinates: boolean;
+  duplicateSites: number;
+}
+
 export interface AnalysisResult {
   datasetId: string;
   datasetName: string;
@@ -472,6 +501,8 @@ export interface AnalysisResult {
   dashboardPlanWarnings?: DashboardPlanWarning[];
   businessContext?: TelecomBusinessContext;
   businessStatusBreakdown: BusinessStatusItem[];
+  geoSites: GeoSiteStat[];
+  geoQuality: GeoQuality | null;
   distribution: { bins: string[]; counts: number[]; metric: string } | null;
   sankey: SankeyData | null;
   /** Health score 0..100 */

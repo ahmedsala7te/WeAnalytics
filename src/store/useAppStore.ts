@@ -7,7 +7,7 @@ import { answerQuery } from "@/agents/chatAssistant";
 import { applyWidgetActions, describeAction, parseActions } from "@/agents/dashboardActions";
 import { planActions } from "@/llm/actionAssist";
 import { DEFAULT_OLLAMA_URL, chatOnce, pickDefaultModel, pingOllama, streamChat, type LlmChatMessage } from "@/llm/ollamaClient";
-import { buildChatSystemPrompt, buildNarrativePrompt, parseNarrativeJson } from "@/llm/contextBuilder";
+import { buildChatSystemPrompt, buildNarrativePrompt, narrativeIsSemanticallySafe, parseNarrativeJson } from "@/llm/contextBuilder";
 import { runMappingAssist } from "@/llm/mappingAssist";
 import type {
   AgentProgressEvent,
@@ -505,7 +505,7 @@ export const useAppStore = create<AppState>()(
             ],
           });
           const parsed = parseNarrativeJson(raw);
-          if (parsed?.headline && parsed.summary) {
+          if (parsed?.headline && parsed.summary && narrativeIsSemanticallySafe(a, parsed)) {
             const story = {
               ...a.story,
               headline: parsed.headline,

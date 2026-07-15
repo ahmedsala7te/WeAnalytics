@@ -32,7 +32,7 @@ export function buildUnderstandingDigest(report: DataUnderstandingReport): strin
     `ROWS: ${report.quality.rows}`,
     `COLUMNS: ${report.quality.columns}`,
     `DOMAIN MATCHES: ${report.domains.map((d) => `${d.domain} ${d.confidence}%`).join(", ")}`,
-    `DETECTED MAPPING: timestamp=${mapping.timestamp ?? "none"}; entity=${mapping.entity ?? "none"}; region=${mapping.region ?? "none"}; primaryMeasure=${mapping.primaryMeasure ?? "none"}; utilization=${mapping.utilization ?? "none"}; traffic=${mapping.traffic ?? "none"}; capacity=${mapping.capacity ?? "none"}; subscribers=${mapping.subscribers ?? "none"}; alarms=${mapping.alarms ?? "none"}`,
+    `DETECTED MAPPING: timestamp=${mapping.timestamp ?? "none"}; entity=${mapping.entity ?? "none"}; region=${mapping.region ?? "none"}; latitude=${mapping.latitude ?? "none"}; longitude=${mapping.longitude ?? "none"}; primaryMeasure=${mapping.primaryMeasure ?? "none"}; utilization=${mapping.utilization ?? "none"}; traffic=${mapping.traffic ?? "none"}; capacity=${mapping.capacity ?? "none"}; subscribers=${mapping.subscribers ?? "none"}; alarms=${mapping.alarms ?? "none"}`,
     `BUSINESS CASE: ${report.businessContext.selectedLabel} (${report.businessContext.selectedCaseId}); candidates=${report.businessContext.candidates.map((c) => `${c.label} ${c.score}%`).join(", ")}`,
     `QUALITY: numeric=${report.quality.numericColumns}; datetime=${report.quality.datetimeColumns}; categorical=${report.quality.categoricalColumns}; identifiers=${report.quality.identifierColumns}; avgNull=${report.quality.averageNullPct.toFixed(1)}%`,
     report.transformNote ? `TRANSFORM: ${report.transformNote}` : "TRANSFORM: none",
@@ -133,6 +133,18 @@ function buildWarnings(
     warnings.push({
       severity: "info",
       message: "No timestamp column was detected, so trend and forecast widgets will be limited.",
+    });
+  }
+  if (!!mapping.latitude !== !!mapping.longitude) {
+    warnings.push({
+      severity: "warning",
+      message: "Only one coordinate column was detected. Both latitude and longitude are required for the Egypt 3D map.",
+    });
+  }
+  if (mapping.latitude && mapping.longitude) {
+    warnings.push({
+      severity: "info",
+      message: `Geospatial columns detected (${mapping.latitude}, ${mapping.longitude}). The Egypt 3D map will be generated.`,
     });
   }
   if (dataset.rowCount >= 240_000) {

@@ -16,6 +16,7 @@ const ALLOWED_TYPES: WidgetType[] = [
   "kpi-grid",
   "gauge",
   "tilemap",
+  "geo-map-3d",
   "trend",
   "area-trend",
   "heatmap",
@@ -281,6 +282,8 @@ function availability(report: DataUnderstandingReport): (type: WidgetType) => { 
       case "tilemap":
       case "treemap":
         return { ok: !!m.region, reason: "it needs a region/grouping column" };
+      case "geo-map-3d":
+        return { ok: !!m.latitude && !!m.longitude, reason: "it needs latitude and longitude columns" };
       case "histogram":
         return { ok: hasMeasure, reason: "it needs a numeric measure" };
       case "gauge":

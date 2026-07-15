@@ -47,14 +47,19 @@ export function toEpoch(v: CellValue): number | null {
   // Fast path: ISO-like
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/);
   if (m) {
-    t = new Date(
-      Number(m[1]),
-      Number(m[2]) - 1,
-      Number(m[3]),
-      Number(m[4] ?? 0),
-      Number(m[5] ?? 0),
-      Number(m[6] ?? 0)
-    ).getTime();
+    // Preserve explicit ISO timezone information. Treating a trailing Z value
+    // as local time shifts midnight dates backwards in positive UTC zones.
+    const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(s);
+    t = hasExplicitZone
+      ? Date.parse(s)
+      : new Date(
+          Number(m[1]),
+          Number(m[2]) - 1,
+          Number(m[3]),
+          Number(m[4] ?? 0),
+          Number(m[5] ?? 0),
+          Number(m[6] ?? 0)
+        ).getTime();
   } else {
     for (const f of DATE_FORMATS) {
       const d = dayjs(s, f, true);
@@ -92,6 +97,8 @@ function norm(name: string): string {
 }
 
 const SEMANTIC_RULES: { tag: SemanticTag; test: (n: string) => boolean; priority: number }[] = [
+  { tag: "latitude", priority: 11, test: (n) => /^(lat|latitude|sitelat|gpslat|gpsy|ycoord|ycoordinate|northing)$/.test(n) },
+  { tag: "longitude", priority: 11, test: (n) => /^(lng|lon|long|longitude|sitelng|sitelon|gpslng|gpslon|gpsx|xcoord|xcoordinate|easting)$/.test(n) },
   { tag: "critical_alarms", priority: 10, test: (n) => /critical/.test(n) && /(alarm|trap|fault|count)/.test(n) },
   { tag: "alarms", priority: 9, test: (n) => (/(alarm|trap|fault|incident)/.test(n) && !/critical/.test(n)) || /(انذار|إنذار|بلاغ)/.test(n) },
   { tag: "utilization", priority: 10, test: (n) => /(util|occupanc)/.test(n) || /(استغلال|استخدام|اشغال|إشغال)/.test(n) },
@@ -156,6 +163,10 @@ export function measureKind(name: string, semantic?: SemanticTag): "stock" | "fl
   if (semantic === "subscribers" || semantic === "utilization" || semantic === "availability" || semantic === "capacity") return "stock";
   if (semantic === "traffic" || semantic === "alarms" || semantic === "critical_alarms" || semantic === "revenue" || semantic === "quantity") return "flow";
   const n = norm(name);
+  // An explicitly averaged/mean measure is already normalized for its period.
+  // Summing it across elements creates a mathematically valid but operationally
+  // meaningless "total of averages" (for example average critical minutes).
+  if (/(average|avg|mean|median)/.test(n)) return "stock";
   if (/(subscriber|customer|user|headcount|count|active|level|inventory|stock|balance|ratio|percent|score|util|occupanc|avail|temperature|gauge|onhand|مشترك|عملاء|عدد)/.test(n)) return "stock";
   if (/(volume|traffic|throughput|revenue|sales|units|sold|amount|orders|visits|calls|minutes|requests|bytes|tib|tb|gb|mb|kb|erlang|usage|consumption|تداول|استهلاك|حجم)/.test(n)) return "flow";
   return "flow";
@@ -279,6 +290,8 @@ function buildMapping(profile: ColumnProfile[], dataset: Dataset): SemanticMappi
   // not a region — it becomes the entity below.
   let regionName = pickBest(profile, "region", ["categorical", "identifier", "text"])?.name;
   mapping.city = pickBest(profile, "city")?.name;
+  mapping.latitude = pickBest(profile, "latitude", ["numeric"])?.name;
+  mapping.longitude = pickBest(profile, "longitude", ["numeric"])?.name;
 
   // entity: the dimension the analysis is broken down by. Prefer a semantic
   // entity/identifier; otherwise any plain categorical (incl. low-cardinality).
@@ -364,7 +377,12 @@ function buildMapping(profile: ColumnProfile[], dataset: Dataset): SemanticMappi
 
   // Generic-domain anchors
   const measureCols = profile.filter(
-    (p) => p.role === "numeric" && !["timestamp"].includes(p.semantic) && p.name !== mapping.timestamp
+    (p) =>
+      p.role === "numeric" &&
+      !["timestamp", "latitude", "longitude"].includes(p.semantic) &&
+      p.name !== mapping.timestamp &&
+      p.name !== mapping.latitude &&
+      p.name !== mapping.longitude
   );
   mapping.measures = measureCols.map((p) => p.name);
   mapping.primaryMeasure =

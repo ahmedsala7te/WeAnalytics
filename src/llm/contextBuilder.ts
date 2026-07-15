@@ -9,11 +9,16 @@ import type { AnalysisResult } from "@/lib/types";
 
 export function buildAnalysisDigest(a: AnalysisResult): string {
   const L: string[] = [];
+  const criticalTimeComparison = a.businessContext?.selectedCaseId === "critical_time_comparison";
   L.push(`DATASET: ${a.datasetName} — ${a.rowsAnalyzed.toLocaleString()} rows`);
   if (a.timeRange) L.push(`WINDOW: ${fmtDate(a.timeRange.start)} to ${fmtDate(a.timeRange.end)} (${a.timeRange.days} days)`);
   L.push(`DOMAIN: ${a.domains.slice(0, 2).map((d) => `${d.domain} ${d.confidence}%`).join(", ")}`);
   // a network-utilization health score only applies when there's a utilization %
-  if (a.measureIsPct) {
+  if (criticalTimeComparison) {
+    L.push(`ANALYSIS TYPE: Critical / Warning Time Comparison across ${a.entityStats.length} MSANs.`);
+    L.push("MEASURE SEMANTICS: Each critical/warning value is already an average duration for one MSAN and period. Use the network mean across MSANs; NEVER sum these averages and NEVER divide critical/warning time by subscribers.");
+    L.push("MATERIALITY: Day-over-day changes inside the 2% band are stable noise, not worsening exceptions.");
+  } else if (a.measureIsPct) {
     L.push(`NETWORK HEALTH SCORE: ${a.healthScore.toFixed(1)}/100`);
   } else {
     L.push(`ANALYSIS TYPE: ${a.measureLabel} breakdown by ${a.entityStats.length} segments — this is NOT a congestion/utilization dataset, do not describe it as network health or congestion.`);
@@ -102,11 +107,20 @@ export function buildAnalysisDigest(a: AnalysisResult): string {
     L.push(`BUSY HOUR: ${String(bh).padStart(2, "0")}:00 at ${vals[bh].toFixed(1)}% avg utilization`);
   }
 
+  L.push("\nVERIFIED DETERMINISTIC OPERATIONAL STORY:");
+  L.push(`- HEADLINE: ${a.story.headline}`);
+  L.push(`- SUMMARY: ${a.story.summary}`);
+  for (const finding of a.story.keyInsights.slice(0, 6)) L.push(`- FINDING: ${finding}`);
+  for (const risk of a.story.risks.slice(0, 4)) L.push(`- RISK: ${risk}`);
+  for (const recommendation of a.story.recommendations.slice(0, 5)) L.push(`- ACTION: ${recommendation}`);
+
   return L.join("\n");
 }
 
 export function buildChatSystemPrompt(a: AnalysisResult): string {
-  const congestionLine = a.measureIsPct
+  const congestionLine = a.businessContext?.selectedCaseId === "critical_time_comparison"
+    ? `- This is a Critical / Warning Time Comparison. Treat row values as per-MSAN average durations: use network means, material day-over-day exceptions, subscriber exposure, and exact dates. Never sum row averages or calculate critical/warning time per subscriber. Changes inside 2% are stable.`
+    : a.measureIsPct
     ? "- Thresholds used by the platform: congestion ≥90% utilization, critical ≥95%, chronic = congested ≥5 days in 14, SLA target 99.9% availability."
     : `- This dataset has NO utilization/congestion metric. It is a ${a.measureLabel} breakdown across ${a.entityStats.length} segments. Do NOT mention congestion, saturation, network health scores, or alarms — they do not apply. Talk in terms of ${a.measureLabel}, subscribers, segments, shares and growth.`;
   return `You are the AI copilot inside NetPulse, a telecom network intelligence platform. A deterministic analytics pipeline has already analyzed the uploaded dataset. Its complete findings are below — this is your ONLY source of truth.
@@ -124,7 +138,10 @@ ${buildAnalysisDigest(a)}
 }
 
 export function buildNarrativePrompt(a: AnalysisResult): { system: string; user: string } {
-  const lead = a.measureIsPct
+  const criticalTimeComparison = a.businessContext?.selectedCaseId === "critical_time_comparison";
+  const lead = criticalTimeComparison
+    ? "leads with the verified network mean critical-time movement and material MSAN exceptions; never reports a sum of row averages or critical time per subscriber"
+    : a.measureIsPct
     ? "leads with network health and the single most important fact"
     : `leads with the headline ${a.measureLabel}/subscriber figure — do NOT mention "network health score", congestion or saturation (this dataset has no utilization metric)`;
   return {
@@ -162,4 +179,24 @@ export function parseNarrativeJson(raw: string): NarrativeJson | null {
   } catch {
     return null;
   }
+}
+
+/** Reject an LLM rewrite that violates dataset semantics; deterministic text remains. */
+export function narrativeIsSemanticallySafe(a: AnalysisResult, narrative: NarrativeJson): boolean {
+  const text = [
+    narrative.headline,
+    narrative.summary,
+    ...(narrative.keyInsights ?? []),
+    ...(narrative.risks ?? []),
+    ...(narrative.recommendations ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (!a.measureIsPct && /network health score|\bcongestion\b|\bsaturation\b/.test(text)) return false;
+  if (a.businessContext?.selectedCaseId === "critical_time_comparison") {
+    if (/critical time.{0,50}per subscriber|per subscriber.{0,50}critical time/.test(text)) return false;
+    if (/sum(?:med)? (?:of )?(?:the )?(?:average )?critical/.test(text)) return false;
+  }
+  return true;
 }

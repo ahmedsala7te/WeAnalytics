@@ -473,7 +473,10 @@ export function computeIntelligence(frame: Frame, mapping: SemanticMapping, isTe
   /* ------------------- per-element daily series (top risk) ------------------ */
   const topEntityDaily: NamedSeries[] = [];
   if (frame.hasTime) {
-    for (const e of entityStats.slice(0, 12)) {
+    // Keep a wider analytical pool so a lower-baseline element with a sharp
+    // day-over-day deterioration is not omitted from the delta table. Widgets
+    // still cap the number of series they render.
+    for (const e of entityStats.slice(0, 100)) {
       const a = acc.get(e.entity);
       if (!a || a.dailyPeak.size < 2) continue;
       const days = [...a.dailyPeak.keys()].sort((x, y) => x - y);

@@ -23,6 +23,7 @@ type Art = Pick<
   | "correlations"
   | "congestionEvents"
   | "topEntityDaily"
+  | "geoSites"
   | "mapping"
   | "profile"
 > & { measureIsPct: boolean; measureLabel: string; measureHigherIsBad: boolean; dashboardPlan?: LlmDashboardPlan };
@@ -63,6 +64,7 @@ export function designDashboards(a: Art): DashboardDesignResult {
   const hasBusyHour = a.busyHourProfile.length === 24;
   const hasAnomalies = a.anomalies.length > 0;
   const hasSankey = !!a.sankey && a.sankey.links.length > 2;
+  const hasGeo = a.geoSites.length > 0;
   const hasAlarms = a.kpis.some((k) => k.name === "Alarm Volume");
   const peakForecastIdx = Math.max(0, a.forecasts.findIndex((f) => f.name.includes("peak")));
   const reasoning: DashboardReason[] = [];
@@ -260,6 +262,7 @@ export function designDashboards(a: Art): DashboardDesignResult {
     );
     widgets.push(w("dashboard-reasoning", "Why This Dashboard", 4, { dataKey: "executive" }));
     if (hasRegions) addWidget(widgets, reasoning, "executive", "tilemap", "Regional Health Map", 4, "A region column was detected, so executives can see where risk is concentrated.", cols(a.mapping.region, a.mapping.utilization), { subtitle: "Click a region to filter the workspace" });
+    if (hasGeo) addWidget(widgets, reasoning, "executive", "geo-map-3d", "Egypt Network Digital Twin", 4, "Valid latitude and longitude columns were detected, so network risk can be explored in its real geographic context.", cols(a.mapping.latitude, a.mapping.longitude, a.mapping.entity, a.mapping.utilization), { tall: true, subtitle: "3D sites, risk columns and density layers · click a site to investigate" });
     if (hasTrend) addWidget(widgets, reasoning, "executive", "trend", "Congestion & Utilization Trend", hasForecast ? 2 : 4, "A timestamp column was detected, so trend confirms whether congestion pressure is rising or falling.", cols(a.mapping.timestamp, a.mapping.utilization), { dataKey: "regions" });
     if (hasForecast) addWidget(widgets, reasoning, "executive", "forecast", "Capacity Forecast", 2, "Enough history exists to forecast saturation risk from the utilization trend.", cols(a.mapping.timestamp, a.mapping.utilization), { dataKey: String(peakForecastIdx) });
     addWidget(widgets, reasoning, "executive", "insights", "AI Insights & Strategic Recommendations", hasSankey ? 2 : 4, "Insights convert the computed KPIs, risks, forecasts, and root causes into executive actions.", cols(a.mapping.utilization, a.mapping.alarms), { tall: true });
@@ -278,6 +281,7 @@ export function designDashboards(a: Art): DashboardDesignResult {
     reasoning.push({ persona: "noc", widgetTitle: "Live Network Status", reason: "NOC view prioritizes live congestion, alarms, and availability-style KPIs.", sourceColumns: cols(a.mapping.utilization, a.mapping.alarms, a.mapping.availability) });
     widgets.push(w("dashboard-reasoning", "Why This Dashboard", 4, { dataKey: "noc" }));
     if (hasHeatmap) addWidget(widgets, reasoning, "noc", "heatmap", "Congestion Heatmap — Region × Hour", 4, "Hourly utilization and region data were detected, so a heatmap highlights recurring busy periods.", cols(a.mapping.timestamp, a.mapping.region, a.mapping.utilization), { tall: true });
+    if (hasGeo) addWidget(widgets, reasoning, "noc", "geo-map-3d", "Live Egypt Operations Map", 4, "Coordinates were detected, so the NOC can move from regional symptoms to the exact affected network elements.", cols(a.mapping.latitude, a.mapping.longitude, a.mapping.entity, a.mapping.alarms), { tall: true });
     addWidget(widgets, reasoning, "noc", "table-entities", "Critical Elements — Highest Risk Now", 2, "The entity table exposes the exact elements driving operational risk.", cols(a.mapping.entity, a.mapping.region, a.mapping.utilization), { dataKey: "risk", tall: true });
     if (hasAnomalies) addWidget(widgets, reasoning, "noc", "anomalies", "Anomalies & Alarm Storms", 2, "Anomalies were detected, so the NOC dashboard surfaces incident signatures.", cols(a.mapping.timestamp, a.mapping.alarms, a.mapping.utilization), { tall: true });
     if (hasTrend && hasAlarms) addWidget(widgets, reasoning, "noc", "area-trend", "Alarm Trend", 2, "Alarm data and time history were detected, so alarm trend is shown for operations follow-up.", cols(a.mapping.timestamp, a.mapping.alarms), { dataKey: "alarms" });
@@ -296,6 +300,7 @@ export function designDashboards(a: Art): DashboardDesignResult {
     reasoning.push({ persona: "capacity", widgetTitle: "Capacity KPIs", reason: "Capacity view prioritizes headroom, chronic congestion, growth, and saturation risk.", sourceColumns: cols(a.mapping.utilization, a.mapping.capacity, a.mapping.traffic) });
     widgets.push(w("dashboard-reasoning", "Why This Dashboard", 4, { dataKey: "capacity" }));
     if (hasForecast) addWidget(widgets, reasoning, "capacity", "forecast", "Saturation Forecast", hasRegions ? 2 : 4, "Enough time history exists to estimate when high-risk elements may reach saturation.", cols(a.mapping.timestamp, a.mapping.utilization), { dataKey: String(peakForecastIdx) });
+    if (hasGeo) addWidget(widgets, reasoning, "capacity", "geo-map-3d", "Geographic Expansion Priorities", 4, "Coordinates were detected, so capacity investment priorities can be viewed by their physical concentration.", cols(a.mapping.latitude, a.mapping.longitude, a.mapping.entity, a.mapping.capacity), { tall: true });
     addWidget(widgets, reasoning, "capacity", "scatter", "Expansion Priority Quadrant", 2, "Element-level utilization and growth were computed, so the quadrant ranks expansion priorities.", cols(a.mapping.entity, a.mapping.utilization, a.mapping.subscribers), { subtitle: "p95 utilization vs growth — bubble = subscribers" });
     addWidget(widgets, reasoning, "capacity", "table-entities", "Expansion Priorities", hasRegions ? 2 : 4, "The table lists the concrete elements behind capacity risk and forecast dates.", cols(a.mapping.entity, a.mapping.region, a.mapping.utilization), { dataKey: "saturation", tall: true });
     if (hasRegions) addWidget(widgets, reasoning, "capacity", "treemap", "Capacity Risk by Region", 2, "Region data was detected, so regional treemap summarizes where investment pressure is concentrated.", cols(a.mapping.region, a.mapping.utilization), { tall: true });

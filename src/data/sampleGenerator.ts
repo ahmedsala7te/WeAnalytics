@@ -1,6 +1,7 @@
 import { Rng } from "@/lib/rng";
 import { uid } from "@/lib/format";
 import type { Dataset, Row } from "@/lib/types";
+import { REGION_CENTERS } from "./egyptGeography";
 
 /* ------------------------------------------------------------------------
  * Synthetic — but operationally realistic — telecom datasets.
@@ -58,12 +59,15 @@ interface MsanDef {
   baseUtil: number;
   growthPerWeek: number; // % points per week
   chronic: boolean;
+  latitude: number;
+  longitude: number;
 }
 
 function buildFleet(rng: Rng): MsanDef[] {
   const fleet: MsanDef[] = [];
   for (const region of REGIONS) {
     const code = REGION_CODE[region.name];
+    const center = REGION_CENTERS[region.name];
     for (let i = 0; i < region.msans; i++) {
       const chronic = region.name === "Alexandria" && i < 12;
       const warm = !chronic && i === 0; // one elevated element per region for realism
@@ -85,6 +89,8 @@ function buildFleet(rng: Rng): MsanDef[] {
         baseUtil,
         growthPerWeek: chronic ? rng.float(2.2, 3.4) : warm ? rng.float(1.4, 2.2) : rng.float(0.3, 1.7),
         chronic,
+        latitude: center.latitude + rng.gauss(0, center.spread * 0.42),
+        longitude: center.longitude + rng.gauss(0, center.spread),
       });
     }
   }
@@ -153,6 +159,8 @@ export function generateAccessNetworkSample(): Dataset {
         Timestamp: isoHour(t),
         Region: m.region,
         City: m.city,
+        Latitude: round5(m.latitude),
+        Longitude: round5(m.longitude),
         MSAN_ID: m.id,
         Uplink_Interface: m.uplink,
         Technology: m.tech,
@@ -306,7 +314,7 @@ export const SAMPLES: SampleDef[] = [
     id: "access",
     name: "Access Network — MSAN Utilization",
     description: "Hourly uplink utilization, traffic, alarms and QoS for ~100 MSANs across 10 regions (28 days). Contains chronic congestion, a fiber-cut alarm storm and a traffic spike.",
-    approxRows: "~64K rows · 16 columns",
+    approxRows: "~64K rows · 18 columns",
     tags: ["Telecom", "Performance", "Hourly"],
     build: generateAccessNetworkSample,
   },
@@ -338,4 +346,7 @@ function round1(x: number): number {
 }
 function round2(x: number): number {
   return Math.round(x * 100) / 100;
+}
+function round5(x: number): number {
+  return Math.round(x * 100000) / 100000;
 }

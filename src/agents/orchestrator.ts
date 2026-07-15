@@ -12,6 +12,7 @@ import { computeRootCauses } from "./rootCause";
 import { discoverKpis } from "./kpiDiscovery";
 import { composeStory } from "./storytelling";
 import { designDashboards } from "./dashboardDesign";
+import { computeGeospatial } from "./geospatial";
 
 /* ------------------------------------------------------------------------
  * Pipeline orchestrator — runs Agents 2..12 over an ingested dataset.
@@ -127,6 +128,7 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
   emit("telecom", "running", "Scanning for congestion and saturation");
   await pace(150);
   const intel = computeIntelligence(frame, mapping, isTelecom);
+  const geo = computeGeospatial(frame, intel.entityStats);
   emit(
     "telecom",
     isTelecom ? "done" : "skipped",
@@ -181,7 +183,8 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     fc.forecasts,
     intel.healthScore,
     measureIsPct,
-    !!mapping.measureHigherIsBad && !measureIsPct
+    !!mapping.measureHigherIsBad && !measureIsPct,
+    businessContext
   );
   emit("story", "done", "Narrative + insight feed ready");
   await pace(420);
@@ -207,6 +210,7 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     correlations: stats.correlations,
     congestionEvents: intel.congestionEvents,
     topEntityDaily: intel.topEntityDaily,
+    geoSites: geo.sites,
     dashboardPlan: opts.dashboardPlan,
   });
   const { dashboards, reasoning: dashboardReasoning } = designed;
@@ -256,6 +260,8 @@ export async function runPipeline(dataset: Dataset, opts: PipelineOptions = {}):
     dashboardPlanWarnings: [...(opts.dashboardPlan?.warnings ?? []), ...(opts.dashboardPlanWarnings ?? [])],
     businessContext,
     businessStatusBreakdown: buildBusinessStatusBreakdown(ds, businessContext, mapping),
+    geoSites: geo.sites,
+    geoQuality: geo.quality,
     distribution: intel.distribution,
     sankey: intel.sankey,
     healthScore: intel.healthScore,
