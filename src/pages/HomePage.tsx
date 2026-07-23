@@ -123,7 +123,7 @@ export function HomePage() {
         } else if (useLlmPlanner) {
           dashboardPlanWarnings.push({
             severity: "warning",
-            message: "Local Ollama was not connected, so NetPulse used the selected telecom business playbook instead.",
+            message: "Local Ollama was not connected, so WE Autonomous OSS used the selected telecom business playbook instead.",
           });
         }
       } catch (e) {

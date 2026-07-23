@@ -1,4 +1,4 @@
-# NetPulse — AI-Powered Telecom Network Intelligence Hub
+# WE Autonomous OSS — AI-Powered Telecom Operations Intelligence
 
 An enterprise-grade, self-service analytics platform for Telecom OSS environments. Upload any network dataset
 (performance counters, utilization exports, alarm dumps) and a 12-agent AI pipeline automatically profiles it,
@@ -22,6 +22,11 @@ npm run build      # type-checks then produces dist/
 npm run preview    # serve the production build
 ```
 
+The Egypt digital twin uses **Stadia Maps Alidade Smooth Dark**. Localhost works without credentials. For a
+deployed or intranet build, register the production domain with Stadia Maps or copy `.env.example` to `.env.local`
+and set `VITE_STADIA_MAPS_API_KEY`. If Stadia is unavailable, the map falls back to OpenFreeMap and then to the
+offline analytical layer.
+
 **60-second demo:** sign in (pick the CTO role) → on the Data Hub click **Load & analyze** on
 *"Access Network — MSAN Uplink Utilization"* → watch the 12 agents run → **Open dashboards** → switch personas,
 click regions on the health map, ask the Copilot *"Why is congestion increasing?"* → export the PDF report.
@@ -31,7 +36,7 @@ click regions on the health map, ask the Copilot *"Why is congestion increasing?
 | Capability | How |
 |---|---|
 | **Ingestion** | CSV / TSV, Excel, JSON, XML, ZIP archives — parsed entirely in-browser (up to 250K rows) |
-| **Egypt network digital twin** | Detects latitude/longitude columns, validates Egypt coordinates, corrects swapped pairs, aggregates site KPIs, and renders interactive Sites, 3D risk-column, and Heat layers with MapLibre GL + Deck.gl |
+| **Egypt network digital twin** | Detects latitude/longitude columns, validates Egypt coordinates, corrects swapped pairs, aggregates site KPIs, and renders Stadia Alidade Smooth Dark streets with interactive Sites, 3D risk-column, Heat, and height-styled building layers |
 | **Domain detection** | Column-name + semantic fingerprinting → ranked confidence (Telecom 98%, PM 96%, …) |
 | **KPI discovery** | Auto-derives 15+ KPIs (health score, utilization, congestion, headroom, growth, SLA, MTTR-class metrics) with prior-window comparison, sparkline and status |
 | **Telecom intelligence** | Congestion (≥90%), chronic congestion (≥5 days / 14-day window), saturation forecasting, alarm storms, SLA violations, subscriber impact |

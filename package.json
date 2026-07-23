@@ -1,9 +1,9 @@
 {
-  "name": "netpulse-network-intelligence-hub",
+  "name": "we-autonomous-oss",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "AI-Powered Telecom Network Intelligence Dashboard Platform — self-service analytics for OSS environments",
+  "description": "WE Autonomous OSS — AI-powered telecom operations intelligence and geospatial analytics for OSS environments",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

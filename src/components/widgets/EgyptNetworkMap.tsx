@@ -13,9 +13,14 @@ import { useAppStore } from "@/store/useAppStore";
 
 type LayerMode = "sites" | "columns" | "heat";
 type MetricKey = "riskScore" | "avgUtil" | "alarmCount" | "subscribers";
-type BasemapStatus = "loading" | "online" | "offline";
+type BasemapStatus = "loading" | "stadia" | "openfree" | "offline";
 
-const FREE_DARK_BASEMAP = "https://tiles.openfreemap.org/styles/dark";
+const STADIA_STYLE_BASE = "https://tiles.stadiamaps.com/styles/alidade_smooth_dark.json";
+const STADIA_API_KEY = import.meta.env.VITE_STADIA_MAPS_API_KEY?.trim();
+const STADIA_DARK_BASEMAP = STADIA_API_KEY
+  ? `${STADIA_STYLE_BASE}?api_key=${encodeURIComponent(STADIA_API_KEY)}`
+  : STADIA_STYLE_BASE;
+const OPENFREE_DARK_FALLBACK = "https://tiles.openfreemap.org/styles/dark";
 const OFFLINE_STYLE: StyleSpecification = {
   version: 8,
   sources: {},
@@ -72,13 +77,14 @@ export function EgyptNetworkMap({ analysis }: { analysis: AnalysisResult }) {
 
     let map: MapLibreMap;
     let disposed = false;
-    let styleReady = false;
-    let usingFallback = false;
+    let provider: Exclude<BasemapStatus, "loading"> = "stadia";
+    let providerLoaded = false;
+    let fallbackTimer = 0;
 
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: FREE_DARK_BASEMAP,
+        style: STADIA_DARK_BASEMAP,
         center: [EGYPT_VIEW.longitude, EGYPT_VIEW.latitude],
         zoom: EGYPT_VIEW.zoom,
         pitch: EGYPT_VIEW.pitch,
@@ -97,23 +103,36 @@ export function EgyptNetworkMap({ analysis }: { analysis: AnalysisResult }) {
     map.addControl(new maplibregl.FullscreenControl(), "top-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
 
-    const activateFallback = () => {
-      if (disposed || styleReady || usingFallback) return;
-      usingFallback = true;
-      setBasemapStatus("offline");
-      map.setStyle(OFFLINE_STYLE);
+    const scheduleFallback = () => {
+      window.clearTimeout(fallbackTimer);
+      fallbackTimer = window.setTimeout(activateFallback, 6000);
     };
 
-    const fallbackTimer = window.setTimeout(activateFallback, 7000);
+    const activateFallback = () => {
+      if (disposed || providerLoaded) return;
+      if (provider === "stadia") {
+        provider = "openfree";
+        setBasemapStatus("openfree");
+        map.setStyle(OPENFREE_DARK_FALLBACK);
+        scheduleFallback();
+        return;
+      }
+      provider = "offline";
+      setBasemapStatus("offline");
+      map.setStyle(OFFLINE_STYLE);
+      scheduleFallback();
+    };
+
+    scheduleFallback();
 
     map.on("style.load", () => {
       if (disposed) return;
-      styleReady = true;
+      providerLoaded = true;
       window.clearTimeout(fallbackTimer);
-      setBasemapStatus(usingFallback ? "offline" : "online");
+      setBasemapStatus(provider);
       setRendererError(null);
 
-      if (!usingFallback) {
+      if (provider !== "offline") {
         highlightBoundaries(map);
         addThreeDimensionalBuildings(map);
       }
@@ -124,10 +143,6 @@ export function EgyptNetworkMap({ analysis }: { analysis: AnalysisResult }) {
         map.addControl(overlay as unknown as maplibregl.IControl);
         setOverlayReady(true);
       }
-    });
-
-    map.on("error", () => {
-      if (!styleReady) activateFallback();
     });
 
     return () => {
@@ -265,8 +280,14 @@ export function EgyptNetworkMap({ analysis }: { analysis: AnalysisResult }) {
         </div>
         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400">
           <span><strong className="text-white">{sites.length}</strong> mapped sites</span>
-          <span className={basemapStatus === "offline" ? "text-amber-300" : "text-cyan-300"}>
-            {basemapStatus === "loading" ? "Loading streets…" : basemapStatus === "online" ? "Free dark streets" : "Offline fallback"}
+          <span className={basemapStatus === "offline" ? "text-amber-300" : basemapStatus === "openfree" ? "text-slate-300" : "text-cyan-300"}>
+            {basemapStatus === "loading"
+              ? "Loading Stadia…"
+              : basemapStatus === "stadia"
+                ? "Stadia · Alidade Dark"
+                : basemapStatus === "openfree"
+                  ? "OpenFreeMap fallback"
+                  : "Offline fallback"}
           </span>
           {quality && quality.invalidRows > 0 && <span>{fmtNum(quality.invalidRows, 0)} invalid rows</span>}
           {quality && quality.outsideEgyptRows > 0 && <span>{fmtNum(quality.outsideEgyptRows, 0)} outside Egypt</span>}
@@ -327,7 +348,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function highlightBoundaries(map: MapLibreMap): void {
-  const boundaryLayers = ["boundary_state", "boundary_country_z0-4", "boundary_country_z5-"];
+  const boundaryLayers = ["boundary_state", "boundary_country", "boundary_country_z0-4", "boundary_country_z5-"];
   boundaryLayers.forEach((id) => {
     if (!map.getLayer(id)) return;
     map.setPaintProperty(id, "line-color", id === "boundary_state" ? "#55a9bd" : "#91f2f3");
@@ -347,7 +368,19 @@ function addThreeDimensionalBuildings(map: MapLibreMap): void {
       minzoom: 12,
       filter: ["match", ["geometry-type"], ["MultiPolygon", "Polygon"], true, false],
       paint: {
-        "fill-extrusion-color": ["interpolate", ["linear"], ["zoom"], 12, "#172033", 16, "#46566f"],
+        "fill-extrusion-color": [
+          "interpolate",
+          ["linear"],
+          ["coalesce", ["get", "render_height"], ["get", "height"], 0],
+          0,
+          "#171126",
+          25,
+          "#4c1d95",
+          80,
+          "#a855f7",
+          160,
+          "#67e8f9",
+        ],
         "fill-extrusion-height": ["coalesce", ["get", "render_height"], ["get", "height"], 8],
         "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], ["get", "min_height"], 0],
         "fill-extrusion-opacity": 0.72,

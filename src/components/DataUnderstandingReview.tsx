@@ -62,7 +62,7 @@ export function DataUnderstandingReview({
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent-400">LLM Dashboard Planner</p>
             <h2 className="mt-0.5 truncate text-[18px] font-extrabold text-primary">{report.dataset.name}</h2>
             <p className="mt-1 text-[12px] leading-relaxed text-muted">
-              NetPulse profiled the file. Add an optional instruction, then local Ollama can plan the dashboard before deterministic analysis computes the numbers.
+              WE Autonomous OSS profiled the file. Add an optional instruction, then local Ollama can plan the dashboard before deterministic analysis computes the numbers.
               {queueCount > 1 && <span className="ml-1 text-accent-400">{queueCount} files queued for review.</span>}
             </p>
           </div>
@@ -165,7 +165,7 @@ export function DataUnderstandingReview({
                   <h3 className="text-[13px] font-bold text-primary">Detected Business Goal</h3>
                 </div>
                 <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                  NetPulse selected the most likely telecom operations playbook. Correct it if the daily report is for a different decision.
+                  WE Autonomous OSS selected the most likely telecom operations playbook. Correct it if the daily report is for a different decision.
                 </p>
               </div>
               <select

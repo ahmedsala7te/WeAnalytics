@@ -41,7 +41,7 @@ const ALLOWED_TYPES: WidgetType[] = [
 
 const PERSONAS: PersonaId[] = ["executive", "noc", "capacity", "performance", "assurance", "overview"];
 
-const SYSTEM = `You are the dashboard planning agent for NetPulse. You receive a data-understanding digest for one uploaded table and an optional user instruction.
+const SYSTEM = `You are the dashboard planning agent for WE Autonomous OSS. You receive a data-understanding digest for one uploaded table and an optional user instruction.
 
 Return STRICT JSON only, no markdown:
 {

@@ -1,16 +1,17 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Activity, BarChart3, Brain, Fingerprint, Network, ShieldCheck, Zap } from "lucide-react";
+import { BarChart3, Brain, Fingerprint, Network, ShieldCheck, Zap } from "lucide-react";
 import { ROLES } from "@/lib/constants";
 import { useAppStore } from "@/store/useAppStore";
 import type { RoleId } from "@/lib/types";
+import { BrandLockup } from "@/components/brand/BrandLockup";
 
 const HIGHLIGHTS = [
-  { icon: Brain, text: "12-agent AI pipeline — domain detection to executive storytelling" },
-  { icon: BarChart3, text: "Dashboards generated automatically in under 60 seconds" },
-  { icon: Network, text: "Congestion, saturation and root-cause intelligence built-in" },
-  { icon: ShieldCheck, text: "Runs entirely inside your OSS environment — air-gap friendly" },
+  { icon: Brain, text: "12-agent OSS pipeline — profiling, correlation, RCA and executive storytelling" },
+  { icon: BarChart3, text: "PM, FM, capacity and subscriber-impact dashboards in under 60 seconds" },
+  { icon: Network, text: "Egypt 3D digital twin for congestion, alarms and service risk" },
+  { icon: ShieldCheck, text: "Deterministic calculations with local-AI and air-gap-friendly operation" },
 ];
 
 export function LoginPage() {
@@ -32,29 +33,21 @@ export function LoginPage() {
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              "radial-gradient(800px 500px at 20% 10%, rgba(59,130,246,.16), transparent 60%), radial-gradient(700px 500px at 80% 90%, rgba(6,182,212,.12), transparent 55%)",
+              "radial-gradient(800px 500px at 20% 10%, rgba(124,58,237,.22), transparent 60%), radial-gradient(700px 500px at 80% 90%, rgba(6,182,212,.12), transparent 55%)",
           }}
         />
         {/* network grid decoration */}
         <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-[0.13]" aria-hidden>
           <defs>
             <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
-              <path d="M 44 0 L 0 0 0 44" fill="none" stroke="#3b82f6" strokeWidth="0.6" />
+              <path d="M 44 0 L 0 0 0 44" fill="none" stroke="#8b5cf6" strokeWidth="0.6" />
             </pattern>
           </defs>
           <rect width="100%" height="100%" fill="url(#grid)" />
         </svg>
 
         <div className="relative">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-navy-800 shadow-glow">
-              <Activity size={22} className="text-accent-400" />
-            </div>
-            <div>
-              <div className="text-xl font-extrabold tracking-tight">NetPulse</div>
-              <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Network Intelligence Hub</div>
-            </div>
-          </div>
+          <BrandLockup />
 
           <motion.h1
             initial={{ opacity: 0, y: 16 }}
@@ -62,10 +55,10 @@ export function LoginPage() {
             transition={{ delay: 0.1, duration: 0.6 }}
             className="mt-16 max-w-md text-[34px] font-extrabold leading-[1.15] tracking-tight"
           >
-            Any network dataset.
+            From OSS data
             <br />
-            <span className="bg-gradient-to-r from-accent-400 to-info-500 bg-clip-text text-transparent">
-              Executive intelligence
+            <span className="bg-gradient-to-r from-violet-400 via-fuchsia-400 to-cyan-400 bg-clip-text text-transparent">
+              to operational action
             </span>{" "}
             in 60 seconds.
           </motion.h1>

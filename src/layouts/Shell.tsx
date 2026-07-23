@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Activity, Bot, Database, LayoutDashboard, LogOut, Moon, Settings, Sun, UploadCloud } from "lucide-react";
+import { Bot, Database, LayoutDashboard, LogOut, Moon, Settings, Sun, UploadCloud } from "lucide-react";
 import { ROLES } from "@/lib/constants";
 import { useAppStore } from "@/store/useAppStore";
 import { AgentPipelineOverlay } from "@/components/AgentPipelineOverlay";
+import { BrandLockup } from "@/components/brand/BrandLockup";
 
 const NAV = [
   { to: "/", label: "Data Hub", icon: UploadCloud, end: true },
@@ -35,20 +36,7 @@ export function Shell() {
       {/* ------------------------------ sidebar ------------------------------ */}
       <aside className="flex w-[218px] shrink-0 flex-col border-r border-subtle bg-surface">
         {/* brand */}
-        <div className="flex items-center gap-2.5 px-4 py-4">
-          <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-navy-900 shadow-glow dark:bg-navy-800">
-            <Activity size={18} className="text-accent-400" />
-            <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-success-500 animate-pulse-dot" />
-          </div>
-          <div>
-            <div className="text-[14px] font-extrabold tracking-tight text-primary">
-              NetPulse
-            </div>
-            <div className="-mt-0.5 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted">
-              Intelligence Hub
-            </div>
-          </div>
-        </div>
+        <BrandLockup size="compact" tagline="OSS Intelligence" className="px-4 py-4" />
 
         {/* nav */}
         <nav className="mt-2 flex-1 space-y-1 px-2.5">

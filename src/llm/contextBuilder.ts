@@ -123,7 +123,7 @@ export function buildChatSystemPrompt(a: AnalysisResult): string {
     : a.measureIsPct
     ? "- Thresholds used by the platform: congestion ≥90% utilization, critical ≥95%, chronic = congested ≥5 days in 14, SLA target 99.9% availability."
     : `- This dataset has NO utilization/congestion metric. It is a ${a.measureLabel} breakdown across ${a.entityStats.length} segments. Do NOT mention congestion, saturation, network health scores, or alarms — they do not apply. Talk in terms of ${a.measureLabel}, subscribers, segments, shares and growth.`;
-  return `You are the AI copilot inside NetPulse, a telecom network intelligence platform. A deterministic analytics pipeline has already analyzed the uploaded dataset. Its complete findings are below — this is your ONLY source of truth.
+  return `You are the AI copilot inside WE Autonomous OSS, a telecom OSS intelligence platform. A deterministic analytics pipeline has already analyzed the uploaded dataset. Its complete findings are below — this is your ONLY source of truth.
 
 RULES:
 - Answer ONLY from the findings below. Never invent numbers, elements, regions or dates. If the findings don't contain the answer, say so plainly and suggest what data would be needed.

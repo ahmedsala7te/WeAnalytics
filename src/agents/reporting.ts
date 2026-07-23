@@ -22,7 +22,7 @@ export function exportKpiCsv(a: AnalysisResult) {
       [csvCell(k.name), k.value.toFixed(2), csvCell(k.unit), k.changePct === null ? "" : k.changePct.toFixed(1), k.status, k.category].join(",")
     );
   }
-  downloadBlob(new Blob([lines.join("\n")], { type: "text/csv" }), `netpulse-kpis-${stamp()}.csv`);
+  downloadBlob(new Blob([lines.join("\n")], { type: "text/csv" }), `we-autonomous-oss-kpis-${stamp()}.csv`);
 }
 
 export function exportCongestionCsv(a: AnalysisResult) {
@@ -30,7 +30,7 @@ export function exportCongestionCsv(a: AnalysisResult) {
   for (const e of a.congestionEvents.slice(0, 50_000)) {
     lines.push([csvCell(e.entity), csvCell(e.region), fmtDateTime(e.time), e.utilization.toFixed(1), e.severity].join(","));
   }
-  downloadBlob(new Blob([lines.join("\n")], { type: "text/csv" }), `netpulse-congestion-events-${stamp()}.csv`);
+  downloadBlob(new Blob([lines.join("\n")], { type: "text/csv" }), `we-autonomous-oss-congestion-events-${stamp()}.csv`);
 }
 
 function csvCell(s: string): string {
@@ -148,7 +148,7 @@ export function exportXlsx(a: AnalysisResult) {
   ]);
   XLSX.utils.book_append_sheet(wb, insightsSheet, "AI Narrative");
 
-  XLSX.writeFile(wb, `netpulse-analysis-${stamp()}.xlsx`);
+  XLSX.writeFile(wb, `we-autonomous-oss-analysis-${stamp()}.xlsx`);
 }
 
 /* ---------------------------------- PDF ---------------------------------- */
@@ -160,7 +160,7 @@ export function exportPdf(a: AnalysisResult, isDark: boolean) {
   const M = 16;
   const navy = "#0f172a";
   const slate = "#475569";
-  const blue = "#3b82f6";
+  const blue = "#7c3aed";
 
   /* Cover */
   doc.setFillColor(15, 23, 42);
@@ -168,7 +168,7 @@ export function exportPdf(a: AnalysisResult, isDark: boolean) {
   doc.setTextColor(59, 130, 246);
   doc.setFontSize(13);
   doc.setFont("helvetica", "bold");
-  doc.text("NETPULSE — NETWORK INTELLIGENCE HUB", M, 38);
+  doc.text("WE AUTONOMOUS OSS — TELECOM OPERATIONS INTELLIGENCE", M, 38);
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(30);
   doc.text("Executive Network Report", M, 58);
@@ -283,7 +283,7 @@ export function exportPdf(a: AnalysisResult, isDark: boolean) {
   writeSection("Recommendations", a.story.recommendations, [16, 185, 129]);
 
   void blue;
-  doc.save(`netpulse-executive-report-${stamp()}.pdf`);
+  doc.save(`we-autonomous-oss-executive-report-${stamp()}.pdf`);
 }
 
 function pageHeader(doc: jsPDF, title: string, navy: string, slate: string) {
@@ -296,7 +296,7 @@ function pageHeader(doc: jsPDF, title: string, navy: string, slate: string) {
   doc.setFontSize(9);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(100, 116, 139);
-  doc.text(`NetPulse · ${fmtDate(Date.now())}`, 297 - 16, 15, { align: "right" });
+  doc.text(`WE Autonomous OSS · ${fmtDate(Date.now())}`, 297 - 16, 15, { align: "right" });
   void navy;
   void slate;
 }
@@ -308,7 +308,7 @@ export async function exportPptx(a: AnalysisResult, isDark: boolean) {
   pptx.defineLayout({ name: "WIDE", width: 13.33, height: 7.5 });
   pptx.layout = "WIDE";
   const NAVY = "0F172A";
-  const BLUE = "3B82F6";
+  const BLUE = "7C3AED";
   const SLATE = "94A3B8";
   const GREEN = "10B981";
   const AMBER = "F59E0B";
@@ -317,7 +317,7 @@ export async function exportPptx(a: AnalysisResult, isDark: boolean) {
   /* Title slide */
   let slide = pptx.addSlide();
   slide.background = { color: NAVY };
-  slide.addText("NetPulse — Network Intelligence Hub", { x: 0.6, y: 0.7, w: 9, h: 0.5, fontSize: 16, color: BLUE, bold: true });
+  slide.addText("WE Autonomous OSS — Telecom Operations Intelligence", { x: 0.6, y: 0.7, w: 9, h: 0.5, fontSize: 16, color: BLUE, bold: true });
   slide.addText("Executive Network Report", { x: 0.6, y: 1.4, w: 11, h: 1.1, fontSize: 40, color: "FFFFFF", bold: true });
   slide.addText(
     [
@@ -389,5 +389,5 @@ export async function exportPptx(a: AnalysisResult, isDark: boolean) {
     valign: "top",
   });
 
-  await pptx.writeFile({ fileName: `netpulse-executive-deck-${stamp()}.pptx` });
+  await pptx.writeFile({ fileName: `we-autonomous-oss-executive-deck-${stamp()}.pptx` });
 }
